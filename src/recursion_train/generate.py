@@ -23,7 +23,7 @@ if __name__ == '__main__':
     additional_path = args.additional_path
 
     model_dir = f'{BASEPATH}/models/rffmg/t5chem/finetuning/{frag_method}/recursion/recursion{recursion_num}/best_model'
-    data_dir = f'{BASEPATH}/data/rffmg/{frag_method}/5times_sampling/{additional_path}'
+    data_dir = f'{BASEPATH}/data/rffmg/{frag_method}/recursion/recursion{recursion_num}/{additional_path}'
     output_dir = f'{BASEPATH}/results/rffmg/t5chem/finetuning/{frag_method}/recursion/recursion{recursion_num}/beam/{additional_path}'
     os.makedirs(output_dir, exist_ok=True)
 

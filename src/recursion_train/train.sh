@@ -12,7 +12,5 @@ conda activate t5chem
 
 FRAG_METHOD="brics" # "brics" or "rc_cms"
 RECURSION_NUM=1
-N_SELECT=5
-SEED=0
 
-python ${SCRIPT_DIR}/build_and_train.py --frag_method ${FRAG_METHOD} --recursion_num ${RECURSION_NUM} --n_select ${N_SELECT} --seed ${SEED}
+python ${SCRIPT_DIR}/train.py --frag_method ${FRAG_METHOD} --recursion_num ${RECURSION_NUM}

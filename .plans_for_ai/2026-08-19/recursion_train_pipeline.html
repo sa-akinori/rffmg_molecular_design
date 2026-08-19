@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Plan: recursion_train パイプライン (2026-08-19)</title>
+<title>Plan: recursion_train パイプライン (2026-08-19 rev.3)</title>
 <style>
   body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; line-height: 1.7; }
   h1 { border-bottom: 2px solid #333; }
@@ -17,41 +17,54 @@
 </head>
 <body>
 <header>
-  <h1>Plan: recursion_train パイプライン(データ作成+学習 / 生成 / 評価)</h1>
-  <p class="meta">Date: 2026-08-19 | Status: pending-approval</p>
+  <h1>Plan: recursion_train パイプライン(データ作成 / 訓練 / 生成 / 評価)</h1>
+  <p class="meta">Date: 2026-08-19 | Status: pending-approval (rev.3 — リーク回避方式)</p>
 </header>
 
 <section id="overview">
   <h2>概要</h2>
-  <p>ロバスト性評価シナリオ(<code>frag_num</code> / <code>dup_frags</code> / <code>attach_point_num</code>)で
-  <strong>生成に成功した分子</strong>(<code>curated_data.tsv</code> の <code>valid_smis_on_frags</code>)を訓練データに
-  累積追加し、rffmg × t5chem(finetuning)モデルを再学習して、再度4条件(<code>normal</code> + 3シナリオ)で
-  生成精度を検証する「再帰的自己学習」パイプラインを <code>src/recursion_train/</code> に構築する。</p>
+  <p>ロバスト性シナリオ(<code>frag_num</code> / <code>dup_frags</code> / <code>attach_point_num</code>)で
+  <strong>生成に成功した分子</strong>(<code>valid_smis_on_frags</code>)を訓練データに累積追加し、
+  rffmg × t5chem(finetuning)を再学習→再生成→再評価する「再帰的自己学習」パイプラインを
+  <code>src/recursion_train/</code> に構築する。</p>
 
-  <p><strong>スコープ / 制約</strong>:</p>
+  <h2>リーク回避の核心(rev.2 からの是正)</h2>
+  <p>旧設計は「シナリオ test のフラグメント集合 F → 分子 M」ペアを train に追加しつつ、同じ F で test しており
+  train↔test が重複していた。rev.3 は <strong>(B) 方式</strong>:</p>
+  <ol>
+    <li>成功ペア(F→M)を <strong>train のみ</strong>に累積追加。</li>
+    <li>3シナリオの test を <strong>make_datasets.py の該当ロジックを複製して再生成</strong>(拡張後 train.source と dedup、target 空)。
+      → train に入った F は自動除外、新 test は train と重複しない。</li>
+    <li><code>normal</code> は baseline 固定(再分割しない)。ただし <strong>生成分子と同一の分子が val/test にあれば val/test から除去</strong>(train へは移さない)。</li>
+    <li><code>frag_order</code> は作らない。SAFE/promptsmiles/fraggpt 用データも作らない(rffmg のみ)。</li>
+  </ol>
+
+  <p><strong>制約</strong>: rffmg × t5chem × finetuning のみ、<code>sampling='5times_sampling'</code> 固定、
+  frag_method は <code>.sh</code> 先頭変数(既定 brics)、<code>src/recursion_train/</code> 以外は変更しない、汎用関数を再利用。
+  <strong>make_datasets.py は import しない</strong>(先頭で <code>datasets</code> を import するため t5chem 環境で失敗し得る → シナリオ生成ロジックは複製)。</p>
+
+  <h2>recursion{N} データレイアウト(build_dataset.py が生成)</h2>
+  <pre>data/rffmg/{frag}/recursion/recursion{N}/
+├── normal/            train=前ラウンドtrain + 成功ペア(F→M)(累積),
+│                      val/test=前ラウンドval/test から「分子が成功集合の行」を除去
+├── frag_num/          test.*=make_datasets複製で再生成(target空)
+├── dup_frags/         test.*=同上
+└── attach_point_num/  test.*=同上</pre>
   <ul>
-    <li>対象は <strong>rffmg × t5chem × finetuning</strong> のみ。frag_method はファイル先頭変数(既定 <code>brics</code>)。<code>sampling</code> は <code>5times_sampling</code> 固定。</li>
-    <li>ラベル <code>recursion{N}</code>(N=1,2,…)を各スクリプトに渡す。</li>
-    <li><strong><code>src/recursion_train/</code> 以外の <code>src/</code> は変更しない</strong>。既存コードは subprocess 起動 or import で再利用。</li>
-    <li>既存 <code>build_augmented_dataset.py</code> / <code>.sh</code> は削除して新規作成。</li>
-    <li>汎用関数(<code>func.utility.BASEPATH</code>、<code>make_datasets.load_file/save_file</code>、<code>func.evaluation_func.*</code>)を再利用。</li>
+    <li>累積起点: N==1 → baseline <code>5times_sampling/</code>、N≥2 → <code>recursion/recursion{N-1}/</code>。</li>
+    <li>収穫元 curated: N==1 → <code>5times_sampling/beam/{scenario}</code>、N≥2 → <code>recursion/recursion{N-1}/beam/{scenario}</code>。</li>
+    <li>シナリオ再生成の <code>unique_frags.csv</code> は分子が増えないため baseline <code>5times_sampling/unique_frags.csv</code> を流用。</li>
   </ul>
 
-  <p><strong>出力パス</strong>(<code>{sampling}</code> は入れない):</p>
+  <h2>出力パス</h2>
   <table>
     <tr><th>種別</th><th>パス</th></tr>
-    <tr><td>data</td><td><code>data/rffmg/{frag}/recursion/recursion{N}/</code>(train=累積拡張、val/test=normal コピー)</td></tr>
     <tr><td>model</td><td><code>models/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N}/best_model</code></td></tr>
     <tr><td>results</td><td><code>results/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N}/beam/{scenario}/</code></td></tr>
   </table>
 
-  <p><strong>成功例の収穫元</strong>: recursion1 → normal baseline
-  <code>results/rffmg/t5chem/finetuning/{frag}/5times_sampling/beam/{scenario}/curated_data.tsv</code>、
-  recursion{N≥2} → 直前ラウンド <code>.../recursion/recursion{N-1}/beam/{scenario}/curated_data.tsv</code>。</p>
-
-  <p><strong>運用フロー</strong>(手動、ドライバなし):
-  <code>(normal baseline 評価済み)</code> → build_and_train r1 → generate r1 ×4条件 → evaluate r1 ×4条件 →
-  build_and_train r2(r1 の curated を収穫)→ …</p>
+  <p><strong>運用フロー</strong>: <code>(baseline 評価済み)</code> → build_dataset r1 → train r1 →
+  generate r1 ×4条件 → evaluate r1 ×4条件 → build_dataset r2 → …</p>
 </section>
 
 <section id="plan">
@@ -59,84 +72,87 @@
   <ol>
     <article class="step" data-step="1">
       <li>
-        <h3>Step 1: 旧 build_augmented_dataset を削除</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_augmented_dataset.py</code>, <code>src/recursion_train/build_augmented_dataset.sh</code></p>
-        <p><strong>変更内容:</strong> 両ファイルを <code>git rm</code> で削除。<code>__pycache__</code> 残骸も除去。</p>
+        <h3>Step 1: build_and_train.{py,sh} を削除</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_and_train.py</code>, <code>src/recursion_train/build_and_train.sh</code></p>
+        <p><strong>変更内容:</strong> <code>git rm</code> で削除(build_dataset + train に置換)。</p>
         <p><strong>依存関係:</strong> なし</p>
       </li>
     </article>
 
     <article class="step" data-step="2">
       <li>
-        <h3>Step 2: build_and_train.py(データ作成 + 学習 統合)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_and_train.py</code>(新規)</p>
-        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>, <code>--recursion_num</code>, <code>--n_select</code>=5, <code>--seed</code>=0。scenarios/sampling/model_ver は固定)。
-        <br>データ作成: 収穫元 <code>curated_data.tsv</code>(N==1 は 5times_sampling、N≥2 は recursion{N-1})を読み、<code>nvalid_onfrags==0</code> はスキップ、<code>ast.literal_eval(valid_smis_on_frags)</code> から <code>random.Random(seed).sample(min(n_select,len))</code> を抽選。<code>(source,target)</code> で dedup + base train との二重 dedup。base train(N==1 は normal、N≥2 は recursion{N-1})に added を<strong>累積</strong>して <code>train.*</code> を出力、<code>val/test.*</code> は normal からコピー。<code>added_pairs.csv</code>/<code>augmentation_log.txt</code> も出力。
-        <br>学習: <code>subprocess.run</code> で <code>t5chem train --pretrain {BASEPATH}/models/rffmg/t5chem/pretrained --data_dir {recursion{N}} --output_dir {model} --task_type product --num_epoch 50</code>(<code>run_rffmg.sh:29-35</code> の finetuning 分岐と同一)。
-        <br>再利用: <code>func.utility.BASEPATH</code>, <code>make_datasets.load_file/save_file</code>。</p>
+        <h3>Step 2: build_dataset.py(データ作成専用)</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_dataset.py</code>(新規)</p>
+        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>/<code>--recursion_num</code>/<code>--n_select</code>=5/<code>--seed</code>=0)。
+        <code>func.utility</code>(<code>BASEPATH</code>/<code>load_file</code>/<code>save_file</code>/<code>canonical_smiles</code>)・<code>func.fragmentation.GetNHA</code> を import、
+        <code>unique_f_num</code>/<code>countAtttachPoint</code> は複製。</p>
+        <p>(a) <strong>収穫</strong>: 各 <code>{scenario}/curated_data.tsv</code> を読み <code>nvalid_onfrags==0</code> スキップ、
+        単一共有 rng で <code>valid_smis_on_frags</code> から <code>n_select</code> 抽選、<code>(source, canonical(target))</code> 蓄積・dedup。<code>SUCCESS_MOLS=set(added.target)</code>。</p>
+        <p>(b) <strong>normal</strong>(起点: N==1 baseline / N≥2 recursion{N-1}): train=起点train+added(累積)、
+        val/test=起点val/test から <code>canonical(target) in SUCCESS_MOLS</code> の行を除去。</p>
+        <p>(c) <strong>3シナリオ再生成</strong>: <code>make_datasets.py:175-305</code>(frag_num/dup_frags/attach_point_num)を複製。
+        baseline <code>unique_frags.csv</code> + 拡張後 <code>train.source</code> で dedup、<code>test.source</code> + 空 <code>test.target</code> 出力。</p>
+        <p>(d) <code>added_pairs.csv</code> / <code>augmentation_log.txt</code>(件数・除去行数・train サイズ)。</p>
         <p><strong>依存関係:</strong> Step 1 の後</p>
       </li>
     </article>
 
     <article class="step" data-step="3">
       <li>
-        <h3>Step 3: build_and_train.sh(t5chem 環境ラッパー)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_and_train.sh</code>(新規)</p>
-        <p><strong>変更内容:</strong> <code>conda activate t5chem</code>(<code>run_rffmg.sh:8-9</code> と同じ)、cwd をプロジェクトルートへ。先頭変数 <code>FRAG_METHOD="brics"</code> / <code>RECURSION_NUM=1</code> / <code>N_SELECT=5</code> / <code>SEED=0</code>。<code>build_and_train.py</code> を各引数で実行。</p>
+        <h3>Step 3: build_dataset.sh</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_dataset.sh</code>(新規)</p>
+        <p><strong>変更内容:</strong> ルートへ cd、<code>conda activate t5chem</code>、先頭変数 <code>FRAG_METHOD</code>/<code>RECURSION_NUM</code>/<code>N_SELECT</code>/<code>SEED</code>。<code>build_dataset.py</code> を実行。</p>
         <p><strong>依存関係:</strong> Step 2 の後</p>
       </li>
     </article>
 
     <article class="step" data-step="4">
       <li>
-        <h3>Step 4: generate.py(1条件生成)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/generate.py</code>(新規)</p>
-        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>, <code>--recursion_num</code>, <code>--additional_path {normal,frag_num,dup_frags,attach_point_num}</code>, 生成パラメータ <code>--num_beams</code>=50 / <code>--n_samples</code>=50 / <code>--batch_size</code>=8 / <code>--max_length</code>=256)。
-        model_dir=<code>models/.../recursion/recursion{N}/best_model</code>、data_dir=既存 <code>data/rffmg/{frag}/5times_sampling/{additional_path}</code>、output_dir=<code>results/.../recursion/recursion{N}/beam/{additional_path}</code>。
-        <code>gen_rffmg.py</code> の t5chem predict 呼び出しを忠実に再現して <code>subprocess.run</code> で <code>t5chem predict</code> を起動し <code>predictions.csv</code> を生成。時間計測は省略。</p>
-        <p><strong>依存関係:</strong> Step 3 の後(モデルが必要)</p>
+        <h3>Step 4: train.py(訓練専用)</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/train.py</code>(新規)</p>
+        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>/<code>--recursion_num</code>)。<code>BASEPATH</code> を import。
+        <code>subprocess.run</code> で <code>t5chem train --pretrain .../pretrained --data_dir .../recursion/recursion{N}/normal --output_dir models/.../recursion/recursion{N} --task_type product --num_epoch 50</code>。</p>
+        <p><strong>依存関係:</strong> Step 3 の後(データが必要)</p>
       </li>
     </article>
 
     <article class="step" data-step="5">
       <li>
-        <h3>Step 5: generate.sh(t5chem 環境ラッパー)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/generate.sh</code>(新規)</p>
-        <p><strong>変更内容:</strong> <code>conda activate t5chem</code>(<code>gen_rffmg.sh:5-6</code> と同じ)。先頭変数 <code>FRAG_METHOD</code> / <code>RECURSION_NUM</code> / <code>ADDITIONAL_PATH="normal"</code>(1条件ずつ、4条件は変数を変え4回実行)。<code>generate.py</code> を実行。</p>
+        <h3>Step 5: train.sh</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/train.sh</code>(新規)</p>
+        <p><strong>変更内容:</strong> ルートへ cd、<code>conda activate t5chem</code>、先頭変数 <code>FRAG_METHOD</code>/<code>RECURSION_NUM</code>。<code>train.py</code> を実行。</p>
         <p><strong>依存関係:</strong> Step 4 の後</p>
       </li>
     </article>
 
     <article class="step" data-step="6">
       <li>
-        <h3>Step 6: evaluate.py(1条件評価)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/evaluate.py</code>(新規)</p>
-        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>, <code>--recursion_num</code>, <code>--additional_path</code>)。
-        <code>func.evaluation_func</code> から <code>sc3_check_genmol_results</code>, <code>loadTrainSmiles</code>, <code>calcPhysicProp</code> を import。
-        outfd=<code>results/.../recursion/recursion{N}/beam/{additional_path}</code>、predictions=<code>{outfd}/predictions.csv</code>、test.source=既存シナリオ、
-        <strong>novelty 基準 train = 拡張後 <code>data/.../recursion/recursion{N}/train.target</code></strong>(<code>loadTrainSmiles</code>)。
-        <code>evaluation.py __main__</code> の rffmg グルー(predictions を test.source に行番号 join → <code>fragment</code> 列付与 → genmols 構築 → <code>sc3_check_genmol_results(skipCreateExcel=True, n_chunks=5)</code> → <code>stats.csv</code> → <code>calcPhysicProp</code> で <code>physic_property.csv</code>)を忠実に複製(<code>evaluation.py</code> は編集しない)。</p>
-        <p><strong>依存関係:</strong> Step 5 の後(predictions が必要)</p>
+        <h3>Step 6: generate.py を更新</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/generate.py</code>(既存を編集)</p>
+        <p><strong>変更内容:</strong> <code>data_dir</code> を <code>recursion/recursion{N}/{additional_path}</code> に変更。他は不変。</p>
+        <p><strong>依存関係:</strong> Step 5 の後</p>
       </li>
     </article>
 
     <article class="step" data-step="7">
       <li>
-        <h3>Step 7: evaluate.sh(safe 環境ラッパー)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/evaluate.sh</code>(新規)</p>
-        <p><strong>変更内容:</strong> 評価は <code>datasets</code> 依存のため <strong>safe 環境</strong>(<code>run_cpu.sh:6</code> と同様 <code>~/miniconda3/envs/safe/bin/python</code> 直呼び、または <code>conda activate safe</code>)。先頭変数 <code>FRAG_METHOD</code> / <code>RECURSION_NUM</code> / <code>ADDITIONAL_PATH="normal"</code>(1条件ずつ、4回実行)。<code>evaluate.py</code> を実行。</p>
+        <h3>Step 7: evaluate.py を更新</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/evaluate.py</code>(既存を編集)</p>
+        <p><strong>変更内容:</strong> test.source を <code>recursion/recursion{N}/{additional_path}/test.source</code>、
+        novelty 基準 train を <code>recursion/recursion{N}/normal/train.target</code> に変更。他は不変。</p>
         <p><strong>依存関係:</strong> Step 6 の後</p>
       </li>
     </article>
   </ol>
+  <p><strong>変更なし:</strong> <code>generate.sh</code> / <code>evaluate.sh</code>。</p>
 </section>
 
 <section id="notes">
   <h2>前提 / 注意</h2>
   <ul>
-    <li>recursion1 を回す前に、normal baseline(t5chem finetuning)の3シナリオ評価(<code>curated_data.tsv</code>)が済んでいること(本計画の対象外)。</li>
-    <li>コードスタイル(CLAUDE.md): 型ヒント必須、Google style docstring、import 順、単純変換は lambda、無駄な抽象化/コメントを作らない、乱数 seed 明示、SMILES バリデーション省略しない。</li>
-    <li>実装は承認後 <code>implementer</code> に委譲。main ブランチへ直接コミット(worktree・作業ブランチは作らない)。</li>
+    <li>recursion1 の前に normal baseline の3シナリオ評価(<code>curated_data.tsv</code>)が済んでいること。</li>
+    <li>リーク基準は分子レベル(train↔val/test は分子で重複しない、3シナリオ test は train.source と dedup)。</li>
+    <li>コードスタイル(CLAUDE.md)遵守。実装は承認後 <code>implementer</code> に委譲、main へ直接コミット。</li>
   </ul>
 </section>
 </body>

@@ -24,10 +24,10 @@ if __name__ == '__main__':
     cpu_num = os.cpu_count()
 
     outfd = f'{BASEPATH}/results/rffmg/t5chem/finetuning/{frag_method}/recursion/recursion{recursion_num}/beam/{additional_path}'
-    testInputfile = f'{BASEPATH}/data/rffmg/{frag_method}/5times_sampling/{additional_path}/test.source'
+    testInputfile = f'{BASEPATH}/data/rffmg/{frag_method}/recursion/recursion{recursion_num}/{additional_path}/test.source'
 
     # Novelty is measured against the round's expanded train set.
-    tr_file = f'{BASEPATH}/data/rffmg/{frag_method}/recursion/recursion{recursion_num}/train.target'
+    tr_file = f'{BASEPATH}/data/rffmg/{frag_method}/recursion/recursion{recursion_num}/normal/train.target'
     trsmiles = loadTrainSmiles(tr_file)
 
     genmols = pd.read_csv(f'{outfd}/predictions.csv')
