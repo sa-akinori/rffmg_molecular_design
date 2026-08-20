@@ -77,29 +77,23 @@ data/rffmg/{frag}/recursion/recursion{N}/
 - **Changes**: `SCRIPT_DIR=...`、リポジトリルートへ cd、`conda activate t5chem`。先頭変数 `FRAG_METHOD="brics"` / `RECURSION_NUM=1` / `N_SELECT=5` / `SEED=0`。`build_dataset.py` を実行。
 - **Dependencies**: after Step 2
 
-### Step 4: train.py(訓練専用)
+### Step 4: train.sh(訓練。run_rffmg.sh 準拠で t5chem CLI を直接実行)
 
-- **Target file**: `src/recursion_train/train.py`(新規)
-- **Changes**: argparse(`--frag_method`/`--recursion_num`)。`BASEPATH` を import。`subprocess.run(check=True)` で `t5chem train --pretrain {BASEPATH}/models/rffmg/t5chem/pretrained --data_dir {BASEPATH}/data/rffmg/{frag}/recursion/recursion{N}/normal --output_dir {BASEPATH}/models/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N} --task_type product --num_epoch 50`(`run_rffmg.sh:29-35` finetuning 分岐と同一。data_dir が `recursion{N}/normal`)。
+- **Target file**: `src/recursion_train/train.sh`(新規)。**train.py は作らない**(t5chem のみのため `.sh` から CLI を直接叩く形が run_rffmg.sh と同じで冗長がない)。
+- **Changes**: `run_rffmg.sh` の t5chem finetuning 分岐に倣う。`export CUDA_VISIBLE_DEVICES=0`、リポジトリルートへ cd、`conda activate t5chem`、先頭変数 `FRAG_METHOD`/`RECURSION_NUM`。**WANDB オフライン設定**(`export WANDB_MODE=offline` + `WANDB_DIR="wandb/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N}"` + `mkdir -p`)。相対パスで `t5chem train --pretrain models/rffmg/t5chem/pretrained --data_dir data/rffmg/{frag}/recursion/recursion{N}/normal --output_dir models/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N} --task_type product --num_epoch 50`。
 - **Dependencies**: after Step 3(データが必要)
 
-### Step 5: train.sh(t5chem 環境ラッパー)
-
-- **Target file**: `src/recursion_train/train.sh`(新規)
-- **Changes**: ルートへ cd、`conda activate t5chem`、先頭変数 `FRAG_METHOD`/`RECURSION_NUM`。`train.py` を実行。
-- **Dependencies**: after Step 4
-
-### Step 6: generate.py を更新(読み取り先を recursion ツリーへ)
+### Step 5: generate.py を更新(読み取り先を recursion ツリーへ)
 
 - **Target file**: `src/recursion_train/generate.py`(既存を編集)
 - **Changes**: `data_dir` を `.../recursion/recursion{N}/{additional_path}` に変更(旧: `5times_sampling/{additional_path}`)。model_dir / output_dir / t5chem predict 呼び出しは不変。
-- **Dependencies**: after Step 5(モデルが必要)
+- **Dependencies**: after Step 4(モデルが必要)
 
-### Step 7: evaluate.py を更新(読み取り先を recursion ツリーへ)
+### Step 6: evaluate.py を更新(読み取り先を recursion ツリーへ)
 
 - **Target file**: `src/recursion_train/evaluate.py`(既存を編集)
 - **Changes**: test.source を `.../recursion/recursion{N}/{additional_path}/test.source` に、novelty 基準 train を `.../recursion/recursion{N}/normal/train.target` に変更。outfd / グルー / `sc3_check_genmol_results` 呼び出しは不変。
-- **Dependencies**: after Step 6(predictions が必要)
+- **Dependencies**: after Step 5(predictions が必要)
 
 ### 変更なし
 

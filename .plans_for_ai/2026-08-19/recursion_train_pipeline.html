@@ -108,39 +108,29 @@
 
     <article class="step" data-step="4">
       <li>
-        <h3>Step 4: train.py(訓練専用)</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/train.py</code>(新規)</p>
-        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>/<code>--recursion_num</code>)。<code>BASEPATH</code> を import。
-        <code>subprocess.run</code> で <code>t5chem train --pretrain .../pretrained --data_dir .../recursion/recursion{N}/normal --output_dir models/.../recursion/recursion{N} --task_type product --num_epoch 50</code>。</p>
+        <h3>Step 4: train.sh(run_rffmg.sh 準拠で t5chem CLI を直接実行)</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/train.sh</code>(新規)。<strong>train.py は作らない</strong>(t5chem のみのため .sh から CLI 直呼びが run_rffmg.sh と同じで冗長がない)。</p>
+        <p><strong>変更内容:</strong> <code>run_rffmg.sh</code> の t5chem finetuning 分岐に倣う。<code>CUDA_VISIBLE_DEVICES=0</code>、ルートへ cd、<code>conda activate t5chem</code>、先頭変数 <code>FRAG_METHOD</code>/<code>RECURSION_NUM</code>、<strong>WANDB オフライン設定</strong>(<code>WANDB_MODE=offline</code> + <code>WANDB_DIR</code> + <code>mkdir -p</code>)。相対パスで <code>t5chem train --pretrain models/rffmg/t5chem/pretrained --data_dir .../recursion/recursion{N}/normal --output_dir models/.../recursion/recursion{N} --task_type product --num_epoch 50</code>。</p>
         <p><strong>依存関係:</strong> Step 3 の後(データが必要)</p>
       </li>
     </article>
 
     <article class="step" data-step="5">
       <li>
-        <h3>Step 5: train.sh</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/train.sh</code>(新規)</p>
-        <p><strong>変更内容:</strong> ルートへ cd、<code>conda activate t5chem</code>、先頭変数 <code>FRAG_METHOD</code>/<code>RECURSION_NUM</code>。<code>train.py</code> を実行。</p>
+        <h3>Step 5: generate.py を更新</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/generate.py</code>(既存を編集)</p>
+        <p><strong>変更内容:</strong> <code>data_dir</code> を <code>recursion/recursion{N}/{additional_path}</code> に変更。他は不変。</p>
         <p><strong>依存関係:</strong> Step 4 の後</p>
       </li>
     </article>
 
     <article class="step" data-step="6">
       <li>
-        <h3>Step 6: generate.py を更新</h3>
-        <p><strong>対象ファイル:</strong> <code>src/recursion_train/generate.py</code>(既存を編集)</p>
-        <p><strong>変更内容:</strong> <code>data_dir</code> を <code>recursion/recursion{N}/{additional_path}</code> に変更。他は不変。</p>
-        <p><strong>依存関係:</strong> Step 5 の後</p>
-      </li>
-    </article>
-
-    <article class="step" data-step="7">
-      <li>
-        <h3>Step 7: evaluate.py を更新</h3>
+        <h3>Step 6: evaluate.py を更新</h3>
         <p><strong>対象ファイル:</strong> <code>src/recursion_train/evaluate.py</code>(既存を編集)</p>
         <p><strong>変更内容:</strong> test.source を <code>recursion/recursion{N}/{additional_path}/test.source</code>、
         novelty 基準 train を <code>recursion/recursion{N}/normal/train.target</code> に変更。他は不変。</p>
-        <p><strong>依存関係:</strong> Step 6 の後</p>
+        <p><strong>依存関係:</strong> Step 5 の後</p>
       </li>
     </article>
   </ol>
