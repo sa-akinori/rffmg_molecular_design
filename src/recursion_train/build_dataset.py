@@ -1,15 +1,3 @@
-"""Build the recursion-round RFFMG training dataset (data creation only).
-
-The successful generations of the robustness scenarios (frag_num / dup_frags /
-attach_point_num) are harvested and appended to the train set (cumulative), while
-the val/test splits drop any molecule that entered the success set, and the three
-scenario test sets are regenerated so that they never overlap the expanded train.
-
-The scenario-regeneration logic mirrors ``make_datasets.py`` (lines 175-305).
-``make_datasets.py`` is not imported because it pulls in ``datasets`` at import
-time, which is unavailable in the t5chem environment.
-"""
-
 import argparse
 import ast
 import itertools
@@ -21,8 +9,7 @@ from collections import Counter
 import pandas as pd
 from tqdm import tqdm
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from func.utility import BASEPATH, canonical_smiles, load_file, save_file
+from func.utility import BASEPATH, canonical_smiles, load_file, pickle_save, save_file
 
 # Artefact SMILES excluded from the train dedup set in make_datasets.py.
 EXCLUDED_SMILES = 'O=c1/c=c\\c(=O)-n2-c3ccccc3-n-1-c1ccccc1-2'
@@ -188,6 +175,7 @@ if __name__ == '__main__':
     new_source = "\n".join(val_frag_sets) + "\n"
     new_target = "\n".join(['' for _ in val_frag_sets]) + "\n"  # T5Chem requires a target file.
     os.makedirs(f'{out_data_dir}/dup_frags/', exist_ok=True)
+    pickle_save(f'{out_data_dir}/dup_frags/target_frags.pkl', target_frag_set)
     save_file(new_source, f'{out_data_dir}/dup_frags/test.source')
     save_file(new_target, f'{out_data_dir}/dup_frags/test.target')
 

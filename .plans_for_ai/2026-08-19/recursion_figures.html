@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Plan: recursion 図生成 (2026-08-19)</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; line-height: 1.7; }
+  h1 { border-bottom: 2px solid #333; }
+  h2 { margin-top: 1.6em; }
+  .step { margin: 1em 0; padding: 1em; border: 1px solid #ddd; border-radius: 4px; }
+  .meta { color: #666; font-size: 0.9em; }
+  code { background: #f4f4f4; padding: 0.1em 0.3em; border-radius: 3px; }
+  pre { background: #f4f4f4; padding: 0.6em; border-radius: 4px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #ccc; padding: 0.4em 0.6em; text-align: left; font-size: 0.92em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Plan: recursion_train の図生成スクリプト</h1>
+  <p class="meta">Date: 2026-08-19 | Status: pending-approval</p>
+</header>
+
+<section id="overview">
+  <h2>概要</h2>
+  <p>recursion ラウンドの結果から図を生成する <code>src/recursion_train/figure.py</code>(+ <code>figure.sh</code>)を新規作成する。
+  既存 <code>src/figure.py</code> は固定グリッド(<code>{sampling}times_sampling</code>)前提で recursion ツリーに到達できないため、
+  該当ブロックを複製しパスを差し替える。生成する図は3種:</p>
+  <ol>
+    <li><strong>性能図(constraints)</strong>: <code>frag_num</code> / <code>dup_frags</code> / <code>attach_point_num</code> の各シナリオで、
+      <code>curated_data.tsv</code> から <code>validratio</code>/<code>uniqueratio</code>/<code>novelratio</code>/<code>validfragratio</code> を
+      制約軸に対しボックスプロット(figure.py 325-366)。</li>
+    <li><strong>学習曲線</strong>: 当該ラウンドの wandb から train/eval loss(figure.py 428-434)。</li>
+    <li><strong>訓練データの分布</strong>: <code>recursion{N}/normal/train.source</code> 内の各制約値ごとの分子数ヒストグラム(figure.py 368-405)。</li>
+  </ol>
+
+  <p><strong>再利用</strong>(src/ は変更せず import): <code>src/figure.py</code> の
+  <code>read_wandb_loss_history</code>/<code>plot_learning_curve</code>/<code>attach_points_analyze</code>/<code>dup_frags_analyze</code>/<code>dup_frags_analyze_train</code>/<code>frag_num_analyze</code>、
+  <code>func.figure_func</code> の <code>create_boxplot</code>/<code>plot_single_dataset_pdf</code>、<code>func.utility</code> の <code>BASEPATH</code>/<code>pickle_load</code>。</p>
+
+  <p><strong>実行環境</strong>: <strong>safe</strong>(t5chem は matplotlib/seaborn 無しで不可。safe は全依存が揃い func.figure_func も import 可)。</p>
+
+  <p><strong>制約</strong>: <code>src/recursion_train/</code> 以外は変更しない。例外は Step 1(build_dataset.py への
+  <code>target_frags.pkl</code> 出力1行追加。dup_frags 性能図の軸算出に必要。<strong>生成データ内容は不変</strong>)。</p>
+
+  <p class="meta">注意: <code>build_dataset.py</code> にユーザーの未コミット編集がある。Step 1 はその作業ツリー版に1行追記する形になり、コミット時にユーザー編集も同一コミットに含まれる。分離したい場合は事前に build_dataset.{py,sh} をコミットしておくこと。</p>
+
+  <h2>出力パス</h2>
+  <table>
+    <tr><th>図</th><th>パス</th></tr>
+    <tr><td>性能図</td><td><code>figures/constraints/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N}/beam/{scenario}/{metric}.png</code></td></tr>
+    <tr><td>学習曲線</td><td><code>figures/learning_curves/rffmg/t5chem/finetuning/{frag}/recursion/recursion{N}/curve.png</code></td></tr>
+    <tr><td>訓練分布</td><td><code>figures/constraints/train/rffmg/{frag}/recursion/recursion{N}/{scenario}/train.png</code></td></tr>
+  </table>
+</section>
+
+<section id="plan">
+  <h2>実装計画</h2>
+  <ol>
+    <article class="step" data-step="1">
+      <li>
+        <h3>Step 1: build_dataset.py に target_frags.pkl 出力を追加</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/build_dataset.py</code>(既存を編集)</p>
+        <p><strong>変更内容:</strong> <code>func.utility</code> import に <code>pickle_save</code> を追加。dup_frags 出力箇所で
+        <code>pickle_save(f'{out_data_dir}/dup_frags/target_frags.pkl', target_frag_set)</code> を1行追加(make_datasets.py:264 と同じ)。他は不変。</p>
+        <p><strong>依存関係:</strong> なし</p>
+      </li>
+    </article>
+
+    <article class="step" data-step="2">
+      <li>
+        <h3>Step 2: figure.py(recursion 図生成)</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/figure.py</code>(新規)</p>
+        <p><strong>変更内容:</strong> argparse(<code>--frag_method</code>/<code>--recursion_num</code>)。<code>src/figure.py</code> と <code>func.figure_func</code>/<code>func.utility</code> から関数を import して再利用。</p>
+        <p>(1) <strong>性能図</strong>: <code>result_dir=results/.../recursion/recursion{N}/beam</code>。各 const_name の analyze_func/col/hue を設定(dup_frags は <code>pickle_load(recursion{N}/dup_frags/target_frags.pkl)</code> を <code>dup_frags_analyze</code> に渡す)。<code>curated_data.tsv</code> を読み4 metrics を <code>create_boxplot</code> 出力。</p>
+        <p>(2) <strong>学習曲線</strong>: <code>glob(wandb/.../recursion/recursion{N}/**/latest-run/run-*.wandb)</code> → <code>read_wandb_loss_history</code> → <code>plot_learning_curve</code>。</p>
+        <p>(3) <strong>訓練分布</strong>: <code>recursion{N}/normal/train.source</code> を読み、各 const(dup_frags は <code>dup_frags_analyze_train</code>=target 不要)で <code>plot_single_dataset_pdf</code>(density=False)。</p>
+        <p>入力欠損は <code>os.path.exists</code> で skip。</p>
+        <p><strong>依存関係:</strong> Step 1 の後(dup_frags 性能図が target_frags.pkl を要する。学習曲線・訓練分布は非依存)</p>
+      </li>
+    </article>
+
+    <article class="step" data-step="3">
+      <li>
+        <h3>Step 3: figure.sh(safe 環境ラッパー)</h3>
+        <p><strong>対象ファイル:</strong> <code>src/recursion_train/figure.sh</code>(新規)</p>
+        <p><strong>変更内容:</strong> ルートへ cd、<strong>safe 環境</strong>(<code>~/miniconda3/envs/safe/bin/python</code>、evaluate.sh と同方式)。先頭変数 <code>FRAG_METHOD</code>/<code>RECURSION_NUM</code>。<code>figure.py</code> を実行。</p>
+        <p><strong>依存関係:</strong> Step 2 の後</p>
+      </li>
+    </article>
+  </ol>
+</section>
+
+<section id="notes">
+  <h2>前提 / 注意</h2>
+  <ul>
+    <li>図生成の前に、当該ラウンドの evaluate(<code>curated_data.tsv</code>)・build_dataset(train.source / target_frags.pkl)・train(wandb ログ)が揃っていること。</li>
+    <li>コードスタイル(CLAUDE.md)遵守。実装は承認後 <code>implementer</code> に委譲、main へ直接コミット。</li>
+  </ul>
+</section>
+</body>
+</html>
