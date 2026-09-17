@@ -120,14 +120,9 @@ def getSmiContainAllFrags(
     smi_frags:List[str],
     algorithm_name:str
     )->List[str]:
-    return [smi for smi in smis if molContainAllFrags(Smi2Mol(smi), smi_frags, algorithm_name)]
+    # SMILES that cannot be parsed again are invalid products and excluded from fragment checks.
+    return [smi for smi in smis if (mol:=Smi2Mol(smi)) is not None and molContainAllFrags(mol, smi_frags, algorithm_name)]
 
-def getSmiContainAllFrags_exH(
-    smis:List[str],
-    smi_frags:List[str],
-    algorithm_name:str
-    )->List[str]:
-    return [smi for smi in smis if molContainAllFrags_exH(Smi2Mol(smi), smi_frags, algorithm_name)]
 
 def flatten(seq):
 
@@ -269,53 +264,6 @@ def molContainAllFrags(
     else:
         return False
     
-def molContainAllFrags_exH(
-    bmol:Chem.Mol,
-    smi_frags:str,
-    algorithm_name:str
-    )->bool:
-    """
-    Checks if all fragments exist without overlap, and if each embedding
-    does not bond externally from non-anchor atoms.
-    """
-    parts_all = [p.strip() for p in smi_frags.split('.') if p.strip()]
-    need = Counter(parts_all)
-
-    frag_combs = dict()
-    for frag_str, cnt in need.items():
-        core, anchor_mapnums, core_mapnums, dummy_mapnums, frag_mapnums = anchors_and_core(frag_str, dummy2H=False)
-        
-        # Enumerate all matches
-        raw_matches = list(bmol.GetSubstructMatches(core, useChirality=True, uniquify=False))
-        if not raw_matches:
-            return False
-        
-        # Collect the indices of the generated molecule that should be ignored
-        new_raw_matches = []
-        for m in raw_matches:
-            # Extract generated molecule indices corresponding to dummy(*) positions on the fragment
-            dummy_idxs = [m[i] for i, mapnum in enumerate(frag_mapnums) if mapnum not in dummy_mapnums]
-            new_raw_matches.append(dummy_idxs)
-            
-        # Implement legality filter (external bond check)
-        matches = [m for m in new_raw_matches if match_is_legal(bmol, m, core_mapnums, anchor_mapnums, algorithm_name)]
-        matches = list(set([tuple(sorted(m)) for m in matches]))
-        if len(matches) < cnt:
-            return False  # Not enough matches
-            
-        combos = list(itertools.combinations(matches, cnt))
-        frag_combs[frag_str] = combos
-
-    match_combs = list(itertools.product(*list(frag_combs.values())))
-    match_combs = [list(flatten(match_comb)) for match_comb in match_combs]
-    
-    duplicate   = [True if len(match_comb) == len(set(match_comb)) else False for match_comb in match_combs]
-
-    if sum(duplicate):
-        return True
-    
-    else:
-        return False
     
 
 def calculate_avg_tanimoto_similarity(fingerprints: List)->float:
@@ -417,7 +365,7 @@ def evaluation_func(genmoldf, catsmiCol, trsmiles, nmaxgen, algorithm_name):
     # A failed candidate keeps its slot as None so its position stays the k of prediction_k.
     # An empty one is caught by its canonical SMILES: Chem.MolFromSmiles('') returns an atom-less
     # Mol instead of None.
-    canonicalize = lambda smi: Smi2CanSmi(smi) or None
+    canonicalize = lambda smi: can if (can := Smi2CanSmi(smi)) and Smi2Mol(can) is not None else None
     canonical_smis           = genmoldf[catsmiCol].apply(lambda x: [canonicalize(s) for s in x])
     genmoldf['valid_smis']   = canonical_smis.apply(lambda x: [s for s in x if s is not None])
     genmoldf['nvalid']       = genmoldf['valid_smis'].apply(len)
@@ -436,16 +384,11 @@ def evaluation_func(genmoldf, catsmiCol, trsmiles, nmaxgen, algorithm_name):
     genmoldf.loc[~np.isfinite(genmoldf['uniqueratio']),'uniqueratio'] = 0 # 0 division -> 0
     
     # substructure based validity must be checked
-    genmoldf['valid_smis_on_frags']  = genmoldf.apply(lambda row: getSmiContainAllFrags(row['unique_smis'],row['fragment'], algorithm_name), axis=1)
+    genmoldf['valid_smis_on_frags']  = genmoldf.apply(lambda row: getSmiContainAllFrags(row['unique_smis'], row['fragment'], algorithm_name), axis=1)
     genmoldf['valid_mols_on_frags']  = genmoldf['valid_smis_on_frags'].apply(lambda x: [Smi2Mol(s) for s in x])
     genmoldf['nvalid_onfrags']       = genmoldf['valid_mols_on_frags'].apply(len)
     genmoldf['validfragratio']       = genmoldf['nvalid_onfrags']/genmoldf['nunique']
-    genmoldf['valid_smis_on_frags_exH'] = genmoldf.apply(lambda row: getSmiContainAllFrags(row['unique_smis'],row['fragment'], algorithm_name), axis=1)
-    genmoldf['valid_mols_on_frags_exH'] = genmoldf['valid_smis_on_frags_exH'].apply(lambda x: [Smi2Mol(s) for s in x])
-    genmoldf['nvalid_onfrags_exH']       = genmoldf['valid_mols_on_frags_exH'].apply(len)
-    genmoldf['validfragratio_exH']       = genmoldf['nvalid_onfrags_exH']/genmoldf['nunique']
     genmoldf.loc[~np.isfinite(genmoldf['validfragratio']),'validfragratio'] = 0 # 0 division
-    genmoldf.loc[~np.isfinite(genmoldf['validfragratio_exH']),'validfragratio_exH'] = 0 # 0 division
     
     # Create novel smiles
     genmoldf['novel_smi']  = genmoldf['unique_smis'].apply(lambda x: set(x) - trsmiles)
@@ -548,8 +491,6 @@ def sc3_check_genmol_results(
     stats['std_validity']         = genmols['validratio'].std() 
     stats['avg_validity_onfrags'] = genmols['validfragratio'].mean() # unique fragments should be used and count should be reflected.
     stats['std_validity_onfrags'] = genmols['validfragratio'].std()
-    stats['avg_validity_onfrags_exH'] = genmols['validfragratio_exH'].mean() # unique fragments should be used and count should be reflected.
-    stats['std_validity_onfrags_exH'] = genmols['validfragratio_exH'].std()
     stats['avg_uniqueness']       = genmols['uniqueratio'].mean()
     stats['std_uniqueness']       = genmols['uniqueratio'].std()
     stats['avg_novelty']          = genmols['novelratio'].mean()
@@ -712,6 +653,5 @@ if __name__=='__main__':
             compound = Smi2CanSmi(compound)
             frag_set = Smi2CanSmi(frag_set)
             b = molContainAllFrags(bmol=Smi2Mol(compound), smi_frags=frag_set, algorithm_name=algorithm_name)
-            c = molContainAllFrags_exH(bmol=Smi2Mol(compound), smi_frags=frag_set, algorithm_name=algorithm_name)
-            print(compound, frag_set, b, c)
+            print(compound, frag_set, b)
             

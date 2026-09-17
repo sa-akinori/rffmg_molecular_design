@@ -1,15 +1,6 @@
-"""Run FragGPT generation as a subprocess and record its wall-clock time.
-
-The generation itself lives in ``src/func/generation_fraggpt_func.py``; launching it as a
-subprocess is what ``gen_rffmg.py`` and ``gen_safe.py`` do too, so all baselines are timed
-the same way (model loading included) by ``func.generation_time.run_and_record_time``.
-"""
-
 import argparse
 import os
 from pathlib import Path
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-
 from func.generation_time import run_and_record_time
 from func.utility import BASEPATH
 

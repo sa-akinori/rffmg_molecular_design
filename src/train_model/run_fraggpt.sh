@@ -1,23 +1,17 @@
-#!/usr/bin/env bash
-export CUDA_VISIBLE_DEVICES=0
-
-# リポジトリルートに移動（どこから実行しても相対パスが解決できるようにする）
+# Setup conda environment and run training for FragGPT model
 cd "$(cd "$(dirname "$0")" && pwd)/../.." || exit 1
-
-# conda setup
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate fraggpt
 
+# Settings for training
 FRAG_NAME="brics"          # "brics" or "rc_cms"
 MODE="finetuning"          # "finetuning" or "from_scratch"
 
-# wandb: ログの保存先を model/mode/slice ごとに分ける（ローカルで識別するため）
+# wandb: separate local log directories by model, mode, and data slice for easy identification
 export WANDB_MODE=offline
 export WANDB_DIR="wandb/fraggpt/gpt/${MODE}/${FRAG_NAME}"
 mkdir -p "${WANDB_DIR}"
 
-# FragGPT の prior は FU-SMILES（[i*] でペア付けした断片列）で学習した無条件言語モデル。
-# 付番のランダム置換と断片順シャッフルは常に適用される（切り替えフラグはない）。
 python src/train_model/train_fraggpt.py \
     --frag_method "${FRAG_NAME}" \
     --mode "${MODE}" \

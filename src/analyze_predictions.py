@@ -196,7 +196,7 @@ if __name__ == "__main__":
     if 0:
         # Paths
         predictions_path = f'{result_dir}/predictions.csv'
-        properties_path = f'{result_dir}/physic_property.csv'
+        properties_path = f'{result_dir}/physical_property.csv'
         output_dir = f'{result_dir}/analysis'
         
         # Extract min/max properties for all rows

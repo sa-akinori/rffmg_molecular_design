@@ -58,8 +58,8 @@ def aggregate_property_plots(input_dir, output_dir, properties=['MW', 'TPSA', 'L
 if __name__ == "__main__":
     # Settings
     fd = os.path.dirname(os.path.dirname(__file__))
-    input_dir = f'{fd}/figures/physic_property/t5chem/trained/dummy/our_slice/beam/individual'
-    output_dir = f'{fd}/figures/physic_property/t5chem/trained/dummy/our_slice/beam/aggregated'
+    input_dir = f'{fd}/figures/physical_property/t5chem/trained/dummy/our_slice/beam/individual'
+    output_dir = f'{fd}/figures/physical_property/t5chem/trained/dummy/our_slice/beam/aggregated'
     
     # Create aggregated plots
     aggregate_property_plots(input_dir, output_dir)

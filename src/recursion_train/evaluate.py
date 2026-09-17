@@ -45,4 +45,4 @@ if __name__ == '__main__':
     gensmiles = list({smi for _, row in genmols.iterrows() for smi in parse_smiles_set(row['novel_smi'])})
     genPhysicprop = calcPhysicProp(list(gensmiles), n_jobs=cpu_num - 1)
     genPhysicprop_df = pd.DataFrame(genPhysicprop)
-    genPhysicprop_df.to_csv(f'{outfd}/physic_property.csv')
+    genPhysicprop_df.to_csv(f'{outfd}/physical_property.csv')

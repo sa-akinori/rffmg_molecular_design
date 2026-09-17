@@ -64,6 +64,13 @@ if __name__ == '__main__':
             x_lim, y_lim = [min(curated_df[col_name]) - 0.5, max(curated_df[col_name]) + 0.5], [-0.05, 1.05]
             save_path = f'{BASEPATH}/figures/constraints/{path_prefix}/{const_name}/{metric}.png'
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            # Save the summary before create_boxplot can wait in plt.show().
+            stats_df = curated_df.groupby([col_name, 'add_frags_num'])[metric].agg(['median', 'count'])
+            cells = stats_df.apply(lambda r: f"{r['median']:.3f} (n={int(r['count'])})", axis=1)
+            table_path = f'{result_dir}/{const_name}/median_summary/{metric}.csv'
+            os.makedirs(os.path.dirname(table_path), exist_ok=True)
+            cells.unstack('add_frags_num').fillna('-').to_csv(table_path)
+
             create_boxplot(df=curated_df, x_col=col_name, y_col=metric, x_name=col_name, y_name=metric_name, x_lim=x_lim, y_lim=y_lim, hue=hue_name, save_path=save_path)
 
     # (2) Learning curves (train/eval loss vs steps) from wandb offline runs.

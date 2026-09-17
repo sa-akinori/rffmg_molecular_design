@@ -104,7 +104,7 @@ if __name__ == '__main__':
     # unique_frags.csv is reused; the dedup set is the expanded normal train.source.
     unique_frags_df = pd.read_csv(f'{baseline_dir}/unique_frags.csv', index_col=0)
     train_source_set = load_file(f'{normal_out_dir}/train.source')
-    train_source_set = [canonical_smiles(source) for source in tqdm(train_source_set) if source != EXCLUDED_SMILES]
+    train_source_set = {canonical_smiles(source) for source in tqdm(train_source_set) if source != EXCLUDED_SMILES}
 
     # frag_num: robustness to the number of fragments in fragment sets.
     cand_frags_set = [frag for frag, count in zip(unique_frags_df['fragment'], unique_frags_df['count']) for _ in range(count)]
@@ -130,12 +130,15 @@ if __name__ == '__main__':
     unique_frags = list(unique_frags_df['fragment'])
     frags_NHA = list(unique_frags_df['frag_NHA'])
 
+    # The dup_num repeats of a target fragment are test prompts themselves, so they must be absent from train.
+    is_unseen = lambda frag: not any(canonical_smiles('.'.join([frag] * dup_num)) in train_source_set for dup_num in range(2, 6))
+
     target_frag_set = list()
     for heavy_num in range(5, 21):
         target_frags = [unique_frag for unique_frag, frag_NHA in zip(unique_frags, frags_NHA) if frag_NHA == heavy_num]
         random.seed(heavy_num)
-        target_frags = random.sample(target_frags, min(len(target_frags), 30))
-        target_frag_set.extend(target_frags)
+        random.shuffle(target_frags)
+        target_frag_set.extend(itertools.islice(filter(is_unseen, target_frags), 30))
 
     cand_frags_df = unique_frags_df.query('fragment not in @target_frag_set').reset_index(drop=True)
     cand_frags_set = [frag for frag, count in zip(cand_frags_df['fragment'], cand_frags_df['count']) for _ in range(count)]
@@ -165,7 +168,7 @@ if __name__ == '__main__':
                 can_comb_frag_set = [canonical_smiles(frag_set) for frag_set in comb_frag_set]
                 can_add_frags = canonical_smiles('.'.join(add_frags))
 
-                if not set(can_comb_frag_set) & set(train_source_set) and can_add_frags not in prev_frag_sets:
+                if not set(can_comb_frag_set) & train_source_set and can_add_frags not in prev_frag_sets:
                     comb_frag_sets.append(comb_frag_set)
                     prev_frag_sets.append(can_add_frags)
 
@@ -180,13 +183,17 @@ if __name__ == '__main__':
     save_file(new_target, f'{out_data_dir}/dup_frags/test.target')
 
     # attach_point_num: robustness to the maximum number of attachment points in fragment sets.
-    val_frag_sets = list()
+    val_frag_sets, target_frag_set = list(), list()
     for max_att_point in range(2, 6):
 
         cond_frags_df = unique_frags_df[unique_frags_df['frag_NAP'] < max_att_point].reset_index(drop=True)
         cond_frags_set = [frag for frag, count in zip(cond_frags_df['fragment'], cond_frags_df['count']) for _ in range(count)]
-        target_frags = list(unique_frags_df[unique_frags_df['frag_NAP'] == max_att_point].sample(n=100, replace=True, random_state=max_att_point)['fragment'])
+        # A target fragment on its own is a test prompt itself, so fragments occurring in train are excluded.
+        cand_target_df = unique_frags_df[unique_frags_df['frag_NAP'] == max_att_point]
+        cand_target_df = cand_target_df[cand_target_df['fragment'].map(lambda frag: canonical_smiles(frag) not in train_source_set)]
+        target_frags = list(cand_target_df.sample(n=100, replace=True, random_state=max_att_point)['fragment'])
         val_frag_sets.append(target_frags)
+        target_frag_set.extend(target_frags)
 
         for frag_num in range(1, 4):
 
@@ -198,7 +205,7 @@ if __name__ == '__main__':
                 frag_set = ['.'.join(random.sample(add_frags + [target_frag], len(add_frags + [target_frag]))) for target_frag in target_frags]
                 can_frag_set = [canonical_smiles(rxn) for rxn in frag_set]
 
-                if not set(can_frag_set) & set(train_source_set) and can_add_frags not in add_frag_sets:
+                if not set(can_frag_set) & train_source_set and can_add_frags not in add_frag_sets:
                     frag_sets.append(frag_set)
                     add_frag_sets.append(can_add_frags)
 
@@ -208,6 +215,7 @@ if __name__ == '__main__':
     new_source = "\n".join(val_frag_sets) + "\n"
     new_target = "\n".join(['' for _ in val_frag_sets]) + "\n"  # T5Chem requires a target file.
     os.makedirs(f'{out_data_dir}/attach_point_num/', exist_ok=True)
+    pickle_save(f'{out_data_dir}/attach_point_num/target_frags.pkl', target_frag_set)
     save_file(new_source, f'{out_data_dir}/attach_point_num/test.source')
     save_file(new_target, f'{out_data_dir}/attach_point_num/test.target')
 

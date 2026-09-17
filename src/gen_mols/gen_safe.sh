@@ -1,7 +1,3 @@
-#!/usr/bin/env bash
-export CUDA_VISIBLE_DEVICES=0
-
-# conda setup
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate safe
 

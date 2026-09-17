@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from func.utility import pickle_load
+from func.utility import pickle_load, BASEPATH
 from func.figure_func import *
 from functools import partial
 from joblib import Parallel, delayed
@@ -15,6 +15,7 @@ from rdkit.Chem import Descriptors
 from collections import Counter
 from wandb.sdk.internal import datastore
 from wandb.proto import wandb_internal_pb2 as wandb_pb
+import itertools
 
 xlims = {
     'MW': [0, 1000],
@@ -167,196 +168,213 @@ def plot_learning_curve(
 if __name__ == "__main__":
     
     # Setting
-    fd = os.path.dirname(os.path.dirname(__file__))
-    # The representation and the model are two independent axes, matching the layout
-    # written by evaluation.py: results/{repr_name}/{model_name}/{model_ver}/...
-    repr_name    = 'rffmg' # ['rffmg', 'safe', 'promptsmiles', 'fraggpt']
-    model_name   = 't5chem' # ['t5chem', 'gpt']
-    model_ver    = 'finetuning' # ['pretrained', 'finetuning', 'from_scratch']
-    frag_method  = 'brics' # ['rc_cms', 'brics']
-    gen_method   = 'beam' # ['beam', 'sampling']
-    sampling_num = 5 # [5, 10]
+    repr_names    = ['rffmg', 'safe', 'promptsmiles', 'fraggpt'] # ['rffmg', 'safe', 'promptsmiles', 'fraggpt']
+    model_names   = ['t5chem', 'gpt'] # ['t5chem', 'gpt']
+    model_vers    = ['finetuning', 'pretrained'] # ['finetuning', 'from_scratch']
+    frag_methods  = ['rc_cms', 'brics'] # ['rc_cms', 'brics']
+    gen_method    = 'beam'
+    sampling_num  = 5 # [5, 10]
     additional_path = 'normal' # ['normal', 'dup_frags', 'frag_num', 'frag_order', 'attach_point_num']
-    # RFFMG keeps its data and results under a {N}times_sampling segment (the number of
-    # fragmentation patterns per molecule); the other representations have no such segment.
-    sampling_seg = f'{sampling_num}times_sampling/' if repr_name == 'rffmg' else ''
-    result_dir   = f'{fd}/results/{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}/{additional_path}'
-    # The figures path keeps the condition segment out, because it differs between blocks
-    # (additional_path for the normal analyses, const_name for the constrained ones).
-    path_prefix  = f'{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
     property_names = ['MW', 'TPSA', 'LogP', 'QED'] # ['MW', 'TPSA', 'LogP', 'QED']
     train_data = False
 
-    if 0:
-        for property_name in property_names:
-            
-            if train_data:
+    if 1:
+        for repr_name, model_name, model_ver, frag_method in list(itertools.product(repr_names, model_names, model_vers, frag_methods)):
+        
+            sampling_seg = f'{sampling_num}times_sampling/' if repr_name == 'rffmg' else ''
+            result_dir   = f'{BASEPATH}/results/{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}/{additional_path}'
+            path_prefix  = f'{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
+    
+            for property_name in property_names:
                 
-                file_path = f'{fd}/results/train_physic_property.csv'
-                output_dir = f'{fd}/figures/physic_property/train/'
+                if train_data:
+                    file_path = f'{BASEPATH}/results/train_physical_property.csv'
+                    output_dir = f'{BASEPATH}/figures/physical_property/train/'
+                    
+                else:
+                    file_path = f'{result_dir}/physical_property.csv'
+                    output_dir = f'{BASEPATH}/figures/physical_property/{path_prefix}/{additional_path}'
+                
+                # Read file in chunks to avoid memory issues
+                if not os.path.exists(file_path):
+                    continue
+                
+                df = pd.read_csv(file_path, index_col=0)
+                
+                # Create individual plot
                 os.makedirs(output_dir, exist_ok=True)
-                
-            else:
-                
-                file_path = f'{result_dir}/physic_property.csv'
-                output_dir = f'{fd}/figures/physic_property/{path_prefix}/{additional_path}'
+                stats = plot_single_dataset_pdf(data=df[property_name], x_label=property_name, y_label='Probability density', y_axis_st='float', density=True, output_path=f'{output_dir}/{property_name}')
+        
+    if 1:
+        for repr_name, model_name, model_ver, frag_method in list(itertools.product(repr_names, model_names, model_vers, frag_methods)):
+        
+            sampling_seg = f'{sampling_num}times_sampling/' if repr_name == 'rffmg' else ''
+            result_dir   = f'{BASEPATH}/results/{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}/{additional_path}'
+            path_prefix  = f'{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
+            
+            # Setting
+            pred_path = f'{result_dir}/predictions.csv'
+            prop_path = f'{result_dir}/physical_property.csv'
+            n_samples = 5
+            
+            # Load dataset
+            if not os.path.exists(pred_path) or not os.path.exists(prop_path):
+                continue
+            
+            pred_df = pd.read_csv(pred_path)
+            pred_df = pred_df.sample(frac=1, random_state=0)
+            prop_df = pd.read_csv(prop_path, index_col=0)
+            pred_cols = [col for col in pred_df.columns if col.startswith('prediction_')]
+            
+            # ---- Get {n_samples} valid samples ----
+            valid_samples = []
+            for idx, row in pred_df.iterrows():
+                preds = [p for p in row[pred_cols].dropna() if str(p).strip()]
+                new_prop_df = prop_df.query('SMILES in @preds')
+                if not new_prop_df.empty:
+                    valid_samples.append((idx, preds))
+                if len(valid_samples) >= n_samples:
+                    break
+
+            # ---- Plot ----
+            for idx, preds in valid_samples:
+                new_prop_df = prop_df.query('SMILES in @preds')
+                output_dir = f'{BASEPATH}/figures/physical_property/{path_prefix}/{additional_path}/individual/{idx}'
                 os.makedirs(output_dir, exist_ok=True)
-            
-            # Read file in chunks to avoid memory issues
-            df = pd.read_csv(file_path, index_col=0)
-            
-            # Create individual plot
-            stats = plot_single_dataset_pdf(data=df[property_name], x_label=property_name, y_label='Probability density', y_axis_st='float', density=True, output_path=f'{output_dir}/{property_name}')
-        
-    if 0:
-        # Setting
-        pred_path = f'{result_dir}/predictions.csv'
-        prop_path = f'{result_dir}/physic_property.csv'
-        n_samples = 5
-        
-        # Load dataset
-        pred_df = pd.read_csv(pred_path)
-        pred_df = pred_df.sample(frac=1, random_state=0)
-        prop_df = pd.read_csv(prop_path, index_col=0)
-        pred_cols = [col for col in pred_df.columns if col.startswith('prediction_')]
-        
-        # ---- Get {n_samples} valid samples ----
-        valid_samples = []
-        for idx, row in pred_df.iterrows():
-            preds = [p for p in row[pred_cols].dropna() if str(p).strip()]
-            new_prop_df = prop_df.query('SMILES in @preds')
-            if not new_prop_df.empty:
-                valid_samples.append((idx, preds))
-            if len(valid_samples) >= n_samples:
-                break
 
-        # ---- Plot ----
-        for idx, preds in valid_samples:
-            new_prop_df = prop_df.query('SMILES in @preds')
-            output_dir = f'{fd}/figures/physic_property/{path_prefix}/{additional_path}/individual/{idx}'
-            os.makedirs(output_dir, exist_ok=True)
-
-            for prop in property_names:
-                plot_single_dataset_pdf(data=new_prop_df[prop], x_label=prop, y_label='Number of compounds', density=False, output_path=f'{output_dir}/{prop}')
+                for prop in property_names:
+                    plot_single_dataset_pdf(data=new_prop_df[prop], x_label=prop, y_label='Number of compounds', density=False, output_path=f'{output_dir}/{prop}')
             
     
     # Extract min/max properties and create scatter plots
-    if 0:
-        # Setting
-        prop_path = f'{result_dir}/physic_property.csv'
-        cur_path  = f'{result_dir}/curated_data.tsv'
-        output_dir = f'{fd}/figures/physic_property/{path_prefix}/{additional_path}/minmax'
+    if 1:
+        for repr_name, model_name, model_ver, frag_method in list(itertools.product(repr_names, model_names, model_vers, frag_methods)):
         
-        # Load dataset
-        prop_df = pd.read_csv(prop_path, index_col=0)
-        cur_df  = pd.read_csv(cur_path, sep='\t', index_col=0)
-        
-        # Create partial function with fixed arguments
-        rows   = list(cur_df.iterrows())
-        n_jobs = os.cpu_count() - 1
-        batch_size = len(rows) // n_jobs + (1 if len(rows) % n_jobs else 0)
-        batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
-        
-        # Process in parallel with joblib
-        results = Parallel(n_jobs=n_jobs)(
-        delayed(prop_min_max)(batch_data=batch, pred_col='valid_smis_on_frags', prop_df=prop_df, property_names=property_names)
-        for batch in tqdm(batches, desc="Processing batches"))
-        
-        # Filter out None values
-        results_df = pd.concat(results).reset_index(drop=True)
-        
-        for prop_name in property_names:
-            x_col = f'{prop_name}_min'
-            y_col = f'{prop_name}_max'
-            os.makedirs(output_dir, exist_ok=True)
-            create_scatter_plot(df=results_df, x_col=x_col, y_col=y_col, output_path=f'{output_dir}/{prop_name}.png', add_diagonal=False)
+            sampling_seg = f'{sampling_num}times_sampling/' if repr_name == 'rffmg' else ''
+            result_dir   = f'{BASEPATH}/results/{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}/{additional_path}'
+            path_prefix  = f'{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
+                
+            # Setting
+            prop_path = f'{result_dir}/physical_property.csv'
+            cur_path  = f'{result_dir}/curated_data.tsv'
+            output_dir = f'{BASEPATH}/figures/physical_property/{path_prefix}/{additional_path}/minmax'
+            
+            # Load dataset
+            if not os.path.exists(prop_path) or not os.path.exists(cur_path):
+                continue
+            
+            prop_df = pd.read_csv(prop_path, index_col=0)
+            cur_df  = pd.read_csv(cur_path, sep='\t', index_col=0)
+            
+            # Create partial function with fixed arguments
+            rows   = list(cur_df.iterrows())
+            n_jobs = os.cpu_count() - 1
+            batch_size = len(rows) // n_jobs + (1 if len(rows) % n_jobs else 0)
+            batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+            
+            # Process in parallel with joblib
+            results = Parallel(n_jobs=n_jobs)(
+            delayed(prop_min_max)(batch_data=batch, pred_col='valid_smis_on_frags', prop_df=prop_df, property_names=property_names)
+            for batch in tqdm(batches, desc="Processing batches"))
+            
+            # Filter out None values
+            results_df = pd.concat(results).reset_index(drop=True)
+            
+            for prop_name in property_names:
+                x_col = f'{prop_name}_min'
+                y_col = f'{prop_name}_max'
+                os.makedirs(output_dir, exist_ok=True)
+                create_scatter_plot(df=results_df, x_col=x_col, y_col=y_col, output_path=f'{output_dir}/{prop_name}.png', add_diagonal=False)
     
-    if 0: # For test dataset
-        # Setting
-        const_name = 'frag_num' # ['attach_point_num', 'frag_num']
-        
-        if const_name == 'attach_point_num':
-            analyze_func = attach_points_analyze
-            col_name = f'max_{const_name}'
-            hue_name = 'add_frags_num'
-        
-        elif const_name == 'frag_num':
-            analyze_func = frag_num_analyze
-            col_name = f'frag_num'
-            hue_name = None
-        
-        # Load data sets
-        curated_df = pd.read_csv(f'{result_dir}/curated_data.tsv', sep='\t', index_col=0)
-        curated_df[[col_name, 'add_frags_num']] = curated_df['fragment'].apply(lambda x: pd.Series(analyze_func(x)))
-
-        # Create individual box plots for each metric
-        metrics = [('validratio', 'Valid ratio'), ('uniqueratio', 'Unique ratio'), ('novelratio', 'Novel ratio'), ('validfragratio', 'Validfrag ratio')]
-        for metric, metric_name in metrics:
-            x_lim, y_lim = [min(curated_df[col_name]) - 0.5, max(curated_df[col_name]) + 0.5], [-0.05, 1.05]
-            save_path = f'{fd}/figures/constraints/{path_prefix}/{additional_path}/{metric}.png'
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            create_boxplot(df=curated_df, x_col=col_name, y_col=metric, x_name=col_name, y_name=metric_name, x_lim=x_lim, y_lim=y_lim, hue=hue_name, save_path=save_path)
-            
-    if 0:
+    if 1:
         # For constrained data set
-        # Setting
-        const_name = 'attach_point_num' # ['attach_point_num', 'dup_frags', 'frag_num']
+        for repr_name, model_name, model_ver, frag_method in list(itertools.product(repr_names, model_names, model_vers, frag_methods)):
         
-        if 'attach_point_num' in const_name:
-            analyze_func = attach_points_analyze
-            col_name = f'max_{const_name}'
-            hue_name = 'add_frags_num'
+            sampling_seg = f'{sampling_num}times_sampling/' if repr_name == 'rffmg' else ''
+            result_dir   = f'{BASEPATH}/results/{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
+            path_prefix  = f'{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
+                
+            # Setting
+            for const_name in ['attach_point_num', 'dup_frags', 'frag_num']:
             
-        elif 'dup_frags' in const_name:
-            target_frags = pickle_load(f'{fd}/data/dummy/{frag_method}/{const_name}/target_frags.pkl')
-            analyze_func = dup_frags_analyze(target_frags)
-            col_name = f'dup_frags'
-            hue_name = 'add_frags_num' 
-        
-        elif 'frag_num' in const_name:
-            analyze_func = frag_num_analyze
-            col_name = f'frag_num'
-            hue_name = None
-        
-        # Load data sets
-        curated_df = pd.read_csv(f'{fd}/results/{path_prefix}/{const_name}/curated_data.tsv', sep='\t', index_col=0)
-        curated_df[[col_name, 'add_frags_num']] = curated_df['fragment'].apply(lambda x: pd.Series(analyze_func(x)))
-        
-        # Create individual box plots for each metric
-        metrics = [('validratio', 'Valid ratio'), ('uniqueratio', 'Unique ratio'), ('novelratio', 'Novel ratio'), ('validfragratio', 'Validfrag ratio')]
-        for metric, metric_name in metrics:
-            x_lim, y_lim = [min(curated_df[col_name]) - 0.5, max(curated_df[col_name]) + 0.5], [-0.05, 1.05]
-            save_path = f'{fd}/figures/constraints/{path_prefix}/{const_name}/{metric}.png'
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            create_boxplot(df=curated_df, x_col=col_name, y_col=metric, x_name=col_name, y_name=metric_name, x_lim=x_lim, y_lim=y_lim, hue=hue_name, save_path=save_path)
+                if 'attach_point_num' in const_name:
+                    analyze_func = attach_points_analyze
+                    col_name = f'max_{const_name}'
+                    hue_name = 'add_frags_num'
+                    
+                elif 'dup_frags' in const_name:
+                    target_frags_path = f'{BASEPATH}/data/{repr_name}/{frag_method}/{sampling_seg}{const_name}/target_frags.pkl'
+                    if not os.path.exists(target_frags_path):
+                        continue
+                    target_frags = pickle_load(target_frags_path)
+                    analyze_func = dup_frags_analyze(target_frags)
+                    col_name = f'dup_frags'
+                    hue_name = 'add_frags_num' 
+                
+                elif 'frag_num' in const_name:
+                    analyze_func = frag_num_analyze
+                    col_name = f'frag_num'
+                    hue_name = None
+                
+                # Load data sets
+                if not os.path.exists(f'{result_dir}/{const_name}/curated_data.tsv'):
+                    continue
+                curated_df = pd.read_csv(f'{BASEPATH}/results/{path_prefix}/{const_name}/curated_data.tsv', sep='\t', index_col=0)
+                curated_df[[col_name, 'add_frags_num']] = curated_df['fragment'].apply(lambda x: pd.Series(analyze_func(x)))
+                
+                # Create individual box plots for each metric
+                metrics = [('validratio', 'Valid ratio'), ('uniqueratio', 'Unique ratio'), ('novelratio', 'Novel ratio'), ('validfragratio', 'Validfrag ratio')]
+                for metric, metric_name in metrics:
+                    x_lim, y_lim = [min(curated_df[col_name]) - 0.5, max(curated_df[col_name]) + 0.5], [-0.05, 1.05]
+                    save_path = f'{BASEPATH}/figures/constraints/{path_prefix}/{const_name}/{metric}.png'
+                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                    # Save the summary before create_boxplot can wait in plt.show().
+                    stats_df = curated_df.groupby([col_name, 'add_frags_num'])[metric].agg(['median', 'count'])
+                    cells = stats_df.apply(lambda r: f"{r['median']:.3f} (n={int(r['count'])})", axis=1)
+                    table_path = f'{result_dir}/{const_name}/median_summary/{metric}.csv'
+                    os.makedirs(os.path.dirname(table_path), exist_ok=True)
+                    cells.unstack('add_frags_num').fillna('-').to_csv(table_path)
+
+                    create_boxplot(df=curated_df, x_col=col_name, y_col=metric, x_name=col_name, y_name=metric_name, x_lim=x_lim, y_lim=y_lim, hue=hue_name, save_path=save_path)
             
-    if 0:
+    if 1:
         # Distribution of train about 'const_name'
-        # Setting
-        const_name = 'new_frag_num' # ['attach_point_num', 'dup_frags', 'frag_num', 'new_attach_point_num', 'new_dup_frags', 'new_frag_num']
+        for repr_name, model_name, model_ver, frag_method in list(itertools.product(repr_names, model_names, model_vers, frag_methods)):
         
-        if 'attach_point_num' in const_name:
-            analyze_func = attach_points_analyze
-            col_name = f'max_{const_name}'
+            sampling_seg = f'{sampling_num}times_sampling/' if repr_name == 'rffmg' else ''
+            result_dir   = f'{BASEPATH}/results/{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
+            path_prefix  = f'{repr_name}/{model_name}/{model_ver}/{frag_method}/{sampling_seg}{gen_method}'
             
-        elif 'dup_frags' in const_name:
-            analyze_func = dup_frags_analyze_train
-            col_name = f'dup_frags'
-        
-        elif 'frag_num' in const_name:
-            analyze_func = frag_num_analyze
-            col_name = f'frag_num'
-        
-        # Load data sets
-        data_dir = f'{fd}/data/{repr_name}/{frag_method}/{sampling_seg}'
-        train_df = pd.read_csv(f'{data_dir}normal/train.source', sep='\t', names=['smiles'])
-        train_df[[col_name, 'add_frags_num']] = train_df['smiles'].apply(lambda x: pd.Series(analyze_func(x)))
-        const_count = pd.DataFrame(train_df[col_name].value_counts())
-        const_count.to_csv(f'{data_dir}{const_name}/count.csv')
-        x_lim, y_lim = [min(train_df[col_name]) - 0.5, max(train_df[col_name]) + 0.5], [-0.05, train_df.shape[0]+10]
-        save_path = f'{fd}/figures/constraints/train/{repr_name}/{frag_method}/{sampling_seg}{const_name}/train.png'
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plot_single_dataset_pdf(data=train_df[col_name], x_label=col_name, y_label='Number of compounds', y_axis_st='float', density=False, output_path=save_path)
+            # Setting
+            for const_name in ['attach_point_num', 'dup_frags', 'frag_num']:
+            
+                if 'attach_point_num' in const_name:
+                    analyze_func = attach_points_analyze
+                    col_name = f'max_{const_name}'
+                    
+                elif 'dup_frags' in const_name:
+                    analyze_func = dup_frags_analyze_train
+                    col_name = f'dup_frags'
+                
+                elif 'frag_num' in const_name:
+                    analyze_func = frag_num_analyze
+                    col_name = f'frag_num'
+                
+                # Load data sets
+                data_dir = f'{BASEPATH}/data/{repr_name}/{frag_method}/{sampling_seg}'
+                
+                # Load data sets
+                if not os.path.exists(f'{data_dir}/normal/train.source'):
+                    continue
+                
+                train_df = pd.read_csv(f'{data_dir}/normal/train.source', sep='\t', names=['smiles'])
+                train_df[[col_name, 'add_frags_num']] = train_df['smiles'].apply(lambda x: pd.Series(analyze_func(x)))
+                const_count = pd.DataFrame(train_df[col_name].value_counts())
+                const_count.to_csv(f'{data_dir}{const_name}/count.csv')
+                x_lim, y_lim = [min(train_df[col_name]) - 0.5, max(train_df[col_name]) + 0.5], [-0.05, train_df.shape[0]+10]
+                save_path = f'{BASEPATH}/figures/constraints/train/{repr_name}/{frag_method}/{sampling_seg}{const_name}/train.png'
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                plot_single_dataset_pdf(data=train_df[col_name], x_label=col_name, y_label='Number of compounds', y_axis_st='float', density=False, output_path=save_path)
         
         
     if 0:
@@ -368,7 +386,7 @@ if __name__ == "__main__":
         curated_df['n_wildcards'] = curated_df['fragment'].apply(lambda x: x.count('*'))
         curated_df['n_dup_frags'] = curated_df['fragment'].apply(dup_frags_analyze_train)
 
-        fig_dir = f'{fd}/figures/frag_feat_vs_prop/{path_prefix}/{additional_path}'
+        fig_dir = f'{BASEPATH}/figures/frag_feat_vs_prop/{path_prefix}/{additional_path}'
         for y_col in ['validratio', 'uniqueratio', 'validfragratio', 'novelratio', 'tanimoto_sim']:
 
             # Plot different combinations
@@ -379,19 +397,10 @@ if __name__ == "__main__":
             create_scatter_plot(df=curated_df, x_col='n_wildcards', y_col=y_col, output_path=f'{fig_dir}/n_wildcards/{y_col}.png', show_corr=False, add_diagonal=False)
             create_scatter_plot(df=curated_df, x_col='n_wildcards', y_col=y_col, output_path=f'{fig_dir}/n_dup_frags/{y_col}.png', show_corr=False, add_diagonal=False)
 
-    if 1:
-        # Pretraining learning curves (train/eval loss vs steps) from wandb offline runs
-        out_dir = f'{fd}/figures/learning_curves'
-        run_dirs = {
-            'rffmg_t5_trained_brics':       'wandb/offline-run-20250907_114610-c54mbj4m',
-            'rffmg_t5_trained_rc_cms':      'wandb/offline-run-20250903_155930-1bb137m9',
-            'rffmg_t5_from_scratch_brics':  'wandb/offline-run-20250925_104927-gf6oysoc',
-            'rffmg_t5_from_scratch_rc_cms': 'wandb/offline-run-20250925_104947-sa7dxu6r',
-            'safe_gpt_brics':               'wandb/offline-run-20250920_111843-lxs32jiy',
-            'safe_gpt_rc_cms':              'wandb/offline-run-20250913_185038-i0hyt8qz',
-            }
-
-        for name, run_dir in run_dirs.items():
-            run_file = glob(f'{fd}/{run_dir}/run-*.wandb')[0]
+    if 0:
+        # Learning curves (train/eval loss vs steps) from wandb offline runs.
+        # Interrupted runs leave truncated offline-run-* siblings, so only latest-run is read.
+        for run_file in sorted(glob(f'{BASEPATH}/wandb/**/latest-run/run-*.wandb', recursive=True)):
+            path_prefix = os.path.relpath(os.path.dirname(run_file), f'{BASEPATH}/wandb').removesuffix('/wandb/latest-run')
             hist = read_wandb_loss_history(run_file)
-            plot_learning_curve(hist, f'{out_dir}/{name}.png', title=name)
+            plot_learning_curve(hist, f'{BASEPATH}/figures/learning_curves/{path_prefix}/curve.png', title=path_prefix)

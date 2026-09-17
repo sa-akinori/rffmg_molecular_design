@@ -1,7 +1,4 @@
-#!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# リポジトリルートに移動
 cd "${SCRIPT_DIR}/../.." || exit 1
 
 FRAG_METHOD="brics" # "brics" or "rc_cms"

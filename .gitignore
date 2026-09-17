@@ -3,6 +3,8 @@ models
 data
 results
 figures
-.claude
+run_bash
+.agents
+.codex
+.cache
 __pycache__/
-*.pyc

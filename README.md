@@ -9,10 +9,13 @@ cd rffmg_molecular_design
 
 ## Tutorial
 
-A tutorial for molecular generation is available in [`tutorial.ipynb`](tutorial.ipynb).
-It provides step-by-step instructions for extracting fragments from arbitrary SMILES and generating new molecules using pre-trained models.
+Separate tutorials provide step-by-step instructions for extracting fragments from arbitrary SMILES and generating molecules using pre-trained models:
 
-## Four Conda Environments Required
+- [RFFMG tutorial](tutorial/tutorial_rffmg.ipynb) — use the `t5chem` kernel.
+- [SAFE tutorial](tutorial/tutorial_safe.ipynb) — use the `safe` kernel.
+- [PromptSMILES tutorial](tutorial/tutorial_promptsmiles.ipynb) — use the `promptsmiles` kernel.
+
+## Three Conda Environments Required
 
 One environment per method. `pip install -e .` installs the local `func` package and is required in
 **every** environment.
@@ -35,24 +38,16 @@ pip install -e .
 ```bash
 conda create -n promptsmiles python=3.12.12
 conda activate promptsmiles
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements/promptsmiles_requirements.txt
 pip install -e .
 ```
-### FragGPT
-```bash
-conda create -n fraggpt python=3.12.12
-conda activate fraggpt
-pip install -r requirements/fraggpt_requirements.txt
-pip install -e .
-```
-
 | Method | Representation | Base model | Environment |
 |---|---|---|---|
 | RFFMG (T5Chem) | `fragments >> molecule` | T5 (~14.8M) | `t5chem` |
 | RFFMG (GPT2) | `fragments >> molecule` | `entropy/gpt2_zinc_87m` (~87M) | `t5chem` |
 | SAFE | SAFE string | safe-gpt (~88.8M) | `safe` |
 | PromptSMILES | plain SMILES + inference-time prompting | `entropy/gpt2_zinc_87m` | `promptsmiles` |
-| FragGPT | FU-SMILES (BRICS fragments with paired `[i*]` labels) | `entropy/gpt2_zinc_87m` | `fraggpt` |
 
 Every `run_*.sh` and `gen_*.sh` script activates its own environment, so they can be launched from
 any shell. The `python src/...` commands below have to be run in the environment shown next to them.
@@ -115,7 +110,6 @@ self.tokenizer.save(*args, **kwargs)
 ### Download trained models from Hugging Face
 ```bash
 $ python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sato-akinori/FFMG', allow_patterns='models/*', local_dir='.')"
-$ shopt -s globstar; for zip in models/**/*.zip; do unzip -o "$zip" -d "$(dirname "$zip")"; done
 $ find models -name "*.zip" -exec sh -c 'unzip -o "$1" -d "$(dirname "$1")" && rm "$1"' _ {} \;
 ```
 
@@ -144,6 +138,13 @@ $ python src/curate_datasets.py
 ```
 
 ### Creating Datasets
+
+In the current `src/make_datasets.py`, the train/validation/test split construction and
+SAFE/PromptSMILES dataset saving code are commented out. The active sections build the
+`dup_frags` and `attach_point_num` evaluation datasets and require existing
+`unique_frags.csv` and `normal/train.source` files. The commands below alone do not
+create the complete set of datasets needed for training.
+
 ```bash
 # 1. Create RFFMG fragments
 $ conda activate t5chem
@@ -153,25 +154,22 @@ $ python src/gen_frags/rffmg_frags.py --frag_method brics # choose brics or rc_c
 $ conda activate safe
 $ python src/gen_frags/safe_frags.py --frag_method brics # choose brics or rc_cms
 
-# 3. Create train, test, validation datasets
+# 3. Build dup_frags and attach_point_num evaluation datasets from existing data
 $ conda activate safe
 $ python src/make_datasets.py --frag_method brics # choose brics or rc_cms
 ```
 
-`make_datasets.py` writes the RFFMG dataset for every `--sampling_num`, but the SAFE, PromptSMILES
-and FragGPT datasets only when `--sampling_num 5` (the default), because those three have no
-`sampling_num` level and a different value would overwrite them with a different molecule split.
-Run it once per fragmentation method with the default to obtain all five datasets:
+The datasets used for training and generation are stored at the following paths.
+For RFFMG, `{N}times_sampling` corresponds to `--sampling_num` (default: 5).
 
 | Dataset | Path | Content |
 |---|---|---|
 | RFFMG | `data/rffmg/{frag}/{N}times_sampling/normal/` | `train/val/test.source` + `.target` |
 | SAFE | `data/safe/{frag}/normal` | HF `DatasetDict` (`smiles`, `full_safe`, `pass_safe`, `full_fragments`, `pass_fragments`) |
 | PromptSMILES | `data/promptsmiles/{frag}/normal` | HF `DatasetDict` (`smiles`, `pass_fragments`) |
-| FragGPT | `data/fraggpt/{frag}/normal` | HF `DatasetDict`; train/validation hold `full_fragments`, test holds `pass_fragments` |
 
-All five share the same molecule split, and their test splits hold the same 20,000 molecules in the
-same row order, so the methods can be compared row by row.
+Use the same molecule split and fragment sets when comparing methods. Before comparing
+results row by row, check the row counts and the correspondence between targets and fragment sets.
 
 ### Model Training
 ```bash
@@ -182,11 +180,11 @@ $ bash src/train_model/run_rffmg.sh
 #   MODEL_NAME="gpt":    GPT2 (src/train_model/train_gpt.py). MODE="finetuning" starts from
 #                        entropy/gpt2_zinc_87m; MODE="from_scratch" uses the same config with random weights.
 
-# 2. Fine-tune SAFE-GPT
+# 2. Train SAFE-GPT
+# Set FRAG_NAME/MODE/PRETRAINED_DIR at the top of the .sh before running it.
+# MODE="finetuning": start from the pre-trained weights in PRETRAINED_DIR.
+# MODE="from_scratch": use the config and tokenizer in that directory with randomly initialized weights.
 $ bash src/train_model/run_safe.sh
-# Due to the large number of arguments, they are specified in the .sh file.
-# Adjust the rc_cms part and output_dir in the .sh file as needed. Use --pretrain '' for training without a pre-trained model.
-# The from_scratch models in this study were trained with --pretrain ''.
 
 # 3. Train the PromptSMILES prior (plain-SMILES language model)
 $ bash src/train_model/run_promptsmiles.sh
@@ -195,60 +193,48 @@ $ bash src/train_model/run_promptsmiles.sh
 # inference time. Each molecule is always rewritten from a random root atom, because the prompts
 # seen at inference are non-canonical and start at an arbitrary atom. No augmentation is applied
 # (one molecule = one sequence), and the randomization is drawn once when the dataset is built.
-
-# 4. Train FragGPT (FU-SMILES language model)
-$ bash src/train_model/run_fraggpt.sh
-# Set FRAG_NAME/MODE at the top of the .sh.
-# The model is an unconditional FU-SMILES language model. The attachment labels are relabeled by a
-# random permutation and the fragments are shuffled, which does not change the number of sequences.
 ```
 
-`MODE="finetuning"` starts from `entropy/gpt2_zinc_87m`; `MODE="from_scratch"` uses the same config
-with random weights. All four GPT2-based methods share the same hyperparameters (LR 1e-4, 50 epochs,
+For RFFMG-GPT and PromptSMILES, `MODE="finetuning"` starts from `entropy/gpt2_zinc_87m`,
+and `MODE="from_scratch"` uses the same config with random weights.
+The three GPT2-based methods share the same hyperparameters (LR 1e-4, 50 epochs,
 batch 32, warmup 10000, eval/save every 5000 steps, early stopping patience 15, seed 42), so the
 comparison isolates the representation rather than the training budget.
 
 ### Molecular Generation
 
-All four methods are prompted with the **same fragment sets** (the `pass_fragments` of the shared
+All methods are prompted with the **same fragment sets** (the `pass_fragments` of the shared
 test split, attachment points written as bare `*` with no connectivity information) and write
 `predictions.csv` with the columns `target`, `prediction_1` .. `prediction_N`, so the shared
 evaluation pipeline reads them unchanged.
 
 ```bash
-# RFFMG (T5Chem or GPT2; set MODEL_NAME inside the .sh)
+# RFFMG model
 $ bash src/gen_mols/gen_rffmg.sh
 
-# SAFE-GPT
+# SAFE-GPT model
 $ bash src/gen_mols/gen_safe.sh
 
-# PromptSMILES (scaffold decoration / fragment linking, chosen per row)
+# PromptSMILES model
 $ bash src/gen_mols/gen_promptsmiles.sh
-# Set FRAG_NAME/MODEL_VER/GEN_METHOD at the top of the .sh.
-# GEN_METHOD="beam" matches RFFMG and SAFE; "sampling" is the multinomial scheme of the paper.
-# The `sampler` column of predictions.csv records which of the two a row went through.
-# A fragment set PromptSMILES cannot express is not generated at all; the row is kept as
-# `unsupported` with INVALID_SMILES predictions.
-
-# FragGPT
-$ bash src/gen_mols/gen_fraggpt.sh
-# Set FRAG_NAME/MODEL_VER at the top of the .sh.
-# Each attachment point of the prompted fragment set is given a fresh label, the model completes the
-# FU-SMILES string, and the fragments are reassembled by matching the [i*] labels.
 ```
 
 Results are written to `results/{repr}/{model}/{model_ver}/{frag}/{gen_method}/{additional_path}/`.
 
 ### Evaluation of Generated Molecules
+
+Currently, `src/evaluation.py` disables the basic evaluation with `if 0` and enables
+only the JS divergence comparison with `if 1`. The command below therefore does not
+produce `stats.csv` with the current settings. Before running the basic evaluation,
+change the `if 0` immediately above `# Load dataset` to `if 1`, and change the
+`if 1: # Calculate js-divergence between train and test` block to `if 0`.
+
 ```bash
 $ conda activate safe
 $ python src/evaluation.py --repr_name rffmg --model_name gpt --model_ver finetuning --frag_method rc_cms --additional_path normal
-# --repr_name:  rffmg / safe / promptsmiles / fraggpt (fragment representation, first path segment)
-# --model_name: t5chem / gpt (model the representation was trained with, second path segment)
-# --gen_method: beam / sampling (defaults to beam, except promptsmiles which defaults to sampling)
 ```
 
-Valid `--repr_name` / `--model_name` combinations (any other pair is rejected by the parser):
+`--repr_name` / `--model_name` combinations covered in this README:
 
 | `--repr_name` | `--model_name` | results path |
 |---------------|----------------|--------------|
@@ -256,15 +242,35 @@ Valid `--repr_name` / `--model_name` combinations (any other pair is rejected by
 | rffmg         | gpt            | `results/rffmg/gpt/` |
 | safe          | gpt            | `results/safe/gpt/` |
 | promptsmiles  | gpt            | `results/promptsmiles/gpt/` |
-| fraggpt       | gpt            | `results/fraggpt/gpt/` |
 
-Run the generation step first: the evaluation joins `test.source` and `predictions.csv` by row
-number, and PromptSMILES and FragGPT write their `test.source` / `test.target` at generation time.
+The basic evaluation requires generated `predictions.csv` files and training data.
+For RFFMG, the corresponding `test.source` is joined by row number, so its row count and order
+must match the generation results. SAFE and PromptSMILES use the `fragment` column in
+`predictions.csv` and do not read `test.source`.
 
-The `stats.csv` written by `src/evaluation.py` covers every test row, and all four methods are
-asked for the same fragment set. PromptSMILES generates nothing for a fragment set it cannot
-express, and those rows are scored as `INVALID_SMILES`, exactly like a FragGPT assembly failure or
-a SAFE decoding failure, so the numbers include coverage.
+To run the JS divergence comparison, prepare the physicochemical-property CSVs
+for RFFMG (fine-tuned T5Chem and GPT) and SAFE (pretrained and fine-tuned GPT), plus
+the training molecules. This block uses that fixed comparison regardless of
+`--repr_name`, `--model_name`, or `--model_ver`; `--frag_method` and `--sampling_num`
+select the corresponding input paths.
+
+The training-property CSV paths currently differ between the basic evaluation and
+the JS comparison:
+
+| Operation | Path |
+|---|---|
+| Basic evaluation: existence check | `results/physical_properties/train/{N}times_sampling/physical_property.csv` |
+| Basic evaluation: save (RFFMG only) | `results/physical_properties/train/{N}times_sampling/train_physical_property.csv` |
+| JS comparison: read | `results/train_physical_property.csv` |
+
+Before enabling the JS comparison, align these references to the CSV computed from
+the training data being compared. Enabling the basic evaluation alone does not
+resolve this path mismatch.
+
+When enabled, the basic evaluation writes `stats.csv` using every row of the input
+`predictions.csv`. PromptSMILES generates nothing for fragment sets it cannot express;
+those rows contain `INVALID_SMILES` and receive a score of zero, as with SAFE decoding
+failures. These metrics therefore include coverage.
 
 Which rows were left ungenerated is recorded in the `sampler` column of `predictions.csv`
 (`scaffold` / `linking` / `unsupported` / `invalid_target` / `generation_error`); the counts per

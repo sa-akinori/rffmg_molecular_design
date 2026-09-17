@@ -1,13 +1,9 @@
-#!/usr/bin/env bash
-export CUDA_VISIBLE_DEVICES=0
-
-# リポジトリルートに移動（どこから実行しても相対パスが解決できるようにする）
+# Setup conda environment and run training for RFFMG model
 cd "$(cd "$(dirname "$0")" && pwd)/../.." || exit 1
-
-# conda setup
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate safe
 
+# Settings for training
 FRAG_NAME="rc_cms"          # "brics" or "rc_cms"
 MODE="finetuning"          # "finetuning" or "from_scratch"
 PRETRAINED_DIR="models/safe/gpt/pretrained"
@@ -25,7 +21,7 @@ else
     exit 1
 fi
 
-# wandb: ログの保存先を model/mode/slice ごとに分ける（ローカルで識別するため）
+# wandb: separate local log directories by model, mode, and data slice for easy identification
 export WANDB_MODE=offline
 export WANDB_DIR="wandb/safe/gpt/${MODE}/${FRAG_NAME}"
 mkdir -p "${WANDB_DIR}"

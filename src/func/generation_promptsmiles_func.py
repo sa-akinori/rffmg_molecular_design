@@ -145,48 +145,56 @@ class GPT2PromptSampler:
         self.num_beams = num_beams
 
     def sample(self, prompt: str | list[str], batch_size: int) -> list[str]:
-        """Sample one SMILES per (partial) SMILES prompt in a single batched forward pass.
+        """Return one continuation per requested slot, preserving prompt order.
 
-        A single ``str`` is replicated ``batch_size`` times, which is exactly what
-        ``num_return_sequences=batch_size`` on one input row does internally, so both call
-        styles return ``batch_size`` samples of the same prompt (independent ones under
-        multinomial sampling).
+        In beam mode, identical prompts share one search. If a prompt occurs k times,
+        its top k continuations are assigned to those slots in occurrence order. A string
+        prompt requests ``batch_size`` continuations from one search. This preserves the
+        one-result-per-prompt contract required by ``batch_prompts=True`` while using
+        multiple ranked candidates instead of repeating the best candidate.
 
-        Both decoding schemes return exactly one completion per prompt row
-        (``num_return_sequences=1`` for beam search), which is the contract promptsmiles relies
-        on under ``batch_prompts=True``. Beam search is deterministic, so the ``batch_size``
-        rows of a replicated ``str`` prompt all collapse to the same SMILES: scaffold
-        decoration then yields largely duplicated samples and a lower uniqueness than
-        multinomial sampling. Beam search also expands ``num_beams`` beams for *every* row of
-        the batch at once, so drop ``--n_samples`` if the run runs out of GPU memory.
+        All distinct prompts are batched with the largest requested k as
+        ``num_return_sequences``; unused lower-ranked candidates are discarded. Sampling
+        mode keeps duplicate input rows so that each slot is sampled independently.
 
-        Prompts of different length are **left**-padded: decoder-only models must see their
-        prompt flush against the generated tokens. Left padding also makes every row start
-        generating at the same column ``prompt_len``, so the completion of row ``i`` is simply
-        ``outputs[i, prompt_len:]``. The returned SMILES is built as ``prompt + completion``
-        rather than by decoding the padded row, which guarantees the prefix property
-        promptsmiles asserts (``smiles.startswith(prompt)``) without relying on the tokenizer
-        round-trip of the prompt.
+        Prompts of different length are left-padded for decoder-only generation. The
+        returned SMILES is built as ``prompt + completion`` to preserve the exact prefix,
+        including incomplete rings and branches, without a tokenizer round-trip.
 
         Args:
-            prompt: Partial SMILES supplied by promptsmiles, or a list of them (one per sample,
-                as passed by ``_batch_sample``). May be empty for de novo sampling.
-            batch_size: Number of sequences to sample when ``prompt`` is a single string.
+            prompt: Partial SMILES supplied by promptsmiles, or a list of them (one per
+                sample). May be an empty string for de novo sampling.
+            batch_size: Number of sequences to generate when ``prompt`` is a string.
 
         Returns:
             One decoded SMILES per prompt, in prompt order; each starts with its own prompt.
-            The length is ``batch_size`` for a ``str`` prompt and ``len(prompt)`` for a list.
+            The length is ``batch_size`` for a string prompt and ``len(prompt)`` for a list.
+
+        Raises:
+            ValueError: A prompt requests more candidates than ``num_beams`` in beam mode.
+            RuntimeError: The model returns an unexpected number of continuations.
         """
         prompts = [prompt] * batch_size if isinstance(prompt, str) else list(prompt)
+        if not prompts:
+            return []
+        generation_prompts = prompts
+        num_return_sequences = 1
+        if self.gen_method == "beam":
+            generation_prompts = list(dict.fromkeys(prompts))
+            num_return_sequences = max(Counter(prompts).values())
+            if num_return_sequences > self.num_beams:
+                raise ValueError(
+                    f"A prompt requests {num_return_sequences} candidates, "
+                    f"exceeding num_beams={self.num_beams}."
+                )
         pad_id = self.tokenizer.pad_token_id
-        encoded = self.tokenizer(prompts, add_special_tokens=False)["input_ids"]
+        encoded = self.tokenizer(generation_prompts, add_special_tokens=False)["input_ids"]
         prompt_ids = [[self.tokenizer.bos_token_id] + ids for ids in encoded]
         prompt_len = max(len(ids) for ids in prompt_ids)
         input_ids = torch.tensor([[pad_id] * (prompt_len - len(ids)) + ids for ids in prompt_ids], dtype=torch.long, device=self.device)
         attention_mask = torch.tensor([[0] * (prompt_len - len(ids)) + [1] * len(ids) for ids in prompt_ids], dtype=torch.long, device=self.device)
-        # promptsmiles expects one completion per prompt, not one per beam.
         decode_params = ({"do_sample": True} if self.gen_method == "sampling"
-                         else {"do_sample": False, "num_beams": self.num_beams, "num_return_sequences": 1, "early_stopping": True})
+                         else {"do_sample": False, "num_beams": self.num_beams, "num_return_sequences": num_return_sequences, "early_stopping": True})
         with torch.no_grad():
             outputs = self.model.generate(
                 input_ids=input_ids,
@@ -197,7 +205,21 @@ class GPT2PromptSampler:
                 **decode_params,
             )
         completions = self.tokenizer.batch_decode(outputs[:, prompt_len:], skip_special_tokens=True)
-        return [prompt_smi + completion for prompt_smi, completion in zip(prompts, completions)]
+        expected_count = len(generation_prompts) * num_return_sequences
+        if len(completions) != expected_count:
+            raise RuntimeError(f"Expected {expected_count} continuations, got {len(completions)}.")
+        if self.gen_method == "sampling":
+            return [prompt_smi + completion for prompt_smi, completion in zip(prompts, completions)]
+
+        # generate groups candidates by input prompt, then by beam rank. Restore the
+        # original slots so a continuation is never attached to a different prefix.
+        prompt_offsets = {text: idx * num_return_sequences for idx, text in enumerate(generation_prompts)}
+        next_rank: Counter[str] = Counter()
+        results: list[str] = []
+        for prompt_smi in prompts:
+            results.append(prompt_smi + completions[prompt_offsets[prompt_smi] + next_rank[prompt_smi]])
+            next_rank[prompt_smi] += 1
+        return results
 
     def evaluate(self, smiles: list[str]) -> np.ndarray:
         """Compute the negative log-likelihood of complete SMILES under the prior.

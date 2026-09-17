@@ -1,13 +1,9 @@
-#!/usr/bin/env bash
-export CUDA_VISIBLE_DEVICES=0
-
-# リポジトリルートに移動（どこから実行しても相対パスが解決できるようにする）
+# Setup conda environment and run training for RFFMG model
 cd "$(cd "$(dirname "$0")" && pwd)/../.." || exit 1
-
-# conda setup
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate t5chem
 
+# Settings for training
 FRAG_NAME="brics"          # "brics" or "rc_cms"
 MODE="finetuning"          # "finetuning" or "from_scratch"
 MODEL_NAME="t5chem"        # "t5chem" or "gpt"
@@ -21,7 +17,7 @@ fi
 SAMPLING="${SAMPLING_NUM}times_sampling"
 OUTPUT_DIR="models/rffmg/${MODEL_NAME}/${MODE}/${FRAG_NAME}/${SAMPLING}"
 
-# wandb: ログの保存先を repr/model/mode/slice ごとに分ける（ローカルで識別するため）
+# wandb: separate local log directories by representation, model, mode, and data slice for easy identification
 export WANDB_MODE=offline
 export WANDB_DIR="wandb/rffmg/${MODEL_NAME}/${MODE}/${FRAG_NAME}/${SAMPLING}"
 mkdir -p "${WANDB_DIR}"
@@ -35,7 +31,8 @@ if [ "$MODEL_NAME" = "t5chem" ]; then
     t5chem train ${MODEL_ARG} --data_dir data/rffmg/${FRAG_NAME}/${SAMPLING}/normal --output_dir ${OUTPUT_DIR} --task_type product --num_epoch 50
 
 elif [ "$MODEL_NAME" = "gpt" ]; then
-    # GPT2 (entropy/gpt2_zinc_87m) を素の transformers で学習。finetuning/from_scratch は train_gpt.py が内部で処理。
+    # Train GPT2 (entropy/gpt2_zinc_87m) directly with transformers.
+    # train_gpt.py handles finetuning/from_scratch internally.
     python src/train_model/train_gpt.py \
         --frag_method "${FRAG_NAME}" \
         --mode "${MODE}" \
