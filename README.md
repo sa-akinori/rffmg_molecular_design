@@ -11,7 +11,7 @@ cd rffmg_molecular_design
 
 Separate tutorials provide step-by-step instructions for extracting fragments from arbitrary SMILES and generating molecules using pre-trained models:
 
-- [RFFMG tutorial](tutorial/tutorial_rffmg.ipynb) — use the `t5chem` kernel.
+- [RFFMG tutorial](tutorial/tutorial_rffmg.ipynb) — use the `rffmg` kernel.
 - [SAFE tutorial](tutorial/tutorial_safe.ipynb) — use the `safe` kernel.
 - [PromptSMILES tutorial](tutorial/tutorial_promptsmiles.ipynb) — use the `promptsmiles` kernel.
 
@@ -20,10 +20,10 @@ Separate tutorials provide step-by-step instructions for extracting fragments fr
 One environment per method. `pip install -e .` installs the local `func` package and is required in
 **every** environment.
 
-### T5Chem (also used by RFFMG-GPT and by dataset construction)
+### RFFMG (T5Chem/GPT2 and dataset construction)
 ```bash
-conda create -n t5chem python=3.12.12
-conda activate t5chem
+conda create -n rffmg python=3.12.12
+conda activate rffmg
 pip install -r requirements/t5chem_requirements.txt
 pip install -e .
 ```
@@ -44,8 +44,8 @@ pip install -e .
 ```
 | Method | Representation | Base model | Environment |
 |---|---|---|---|
-| RFFMG (T5Chem) | `fragments >> molecule` | T5 (~14.8M) | `t5chem` |
-| RFFMG (GPT2) | `fragments >> molecule` | `entropy/gpt2_zinc_87m` (~87M) | `t5chem` |
+| RFFMG (T5Chem) | `fragments >> molecule` | T5 (~14.8M) | `rffmg` |
+| RFFMG (GPT2) | `fragments >> molecule` | `entropy/gpt2_zinc_87m` (~87M) | `rffmg` |
 | SAFE | SAFE string | safe-gpt (~88.8M) | `safe` |
 | PromptSMILES | plain SMILES + inference-time prompting | `entropy/gpt2_zinc_87m` | `promptsmiles` |
 
@@ -133,7 +133,7 @@ Coming soon.
 ## Building Datasets
 ### First Step
 ```bash
-$ conda activate t5chem
+$ conda activate rffmg
 $ python src/curate_datasets.py
 ```
 
@@ -147,7 +147,7 @@ create the complete set of datasets needed for training.
 
 ```bash
 # 1. Create RFFMG fragments
-$ conda activate t5chem
+$ conda activate rffmg
 $ python src/gen_frags/rffmg_frags.py --frag_method brics # choose brics or rc_cms
 
 # 2. Create SAFE fragments

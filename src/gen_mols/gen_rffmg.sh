@@ -1,5 +1,5 @@
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate t5chem
+conda activate rffmg
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

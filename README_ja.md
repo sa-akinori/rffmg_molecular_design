@@ -8,7 +8,7 @@ cd rffmg_molecular_design
 
 分子生成のチュートリアルは手法ごとに分かれています。
 
-- [RFFMGチュートリアル](tutorial/tutorial_rffmg.ipynb)：`t5chem` カーネルを使用します。
+- [RFFMGチュートリアル](tutorial/tutorial_rffmg.ipynb)：`rffmg` カーネルを使用します。
 - [SAFEチュートリアル](tutorial/tutorial_safe.ipynb)：`safe` カーネルを使用します。
 - [PromptSMILESチュートリアル](tutorial/tutorial_promptsmiles.ipynb)：`promptsmiles` カーネルを使用します。
 
@@ -19,10 +19,10 @@ cd rffmg_molecular_design
 手法ごとに1つの環境を用意します。`pip install -e .`（ローカルの `func` パッケージ）は
 **すべての環境で必要**です。
 
-### T5Chem（RFFMG-GPT の学習とデータセット構築にも使用）
+### RFFMG（T5Chem・GPT2の学習とデータセット構築に使用）
 ```bash
-conda create -n t5chem python=3.12.12
-conda activate t5chem
+conda create -n rffmg python=3.12.12
+conda activate rffmg
 pip install -r requirements/t5chem_requirements.txt
 pip install -e .
 ```
@@ -44,8 +44,8 @@ pip install -e .
 
 | 手法 | 表現 | ベースモデル | 環境 |
 |---|---|---|---|
-| RFFMG (T5Chem) | `断片集合 >> 分子` | T5 (~14.8M) | `t5chem` |
-| RFFMG (GPT2) | `断片集合 >> 分子` | `entropy/gpt2_zinc_87m` (~87M) | `t5chem` |
+| RFFMG (T5Chem) | `断片集合 >> 分子` | T5 (~14.8M) | `rffmg` |
+| RFFMG (GPT2) | `断片集合 >> 分子` | `entropy/gpt2_zinc_87m` (~87M) | `rffmg` |
 | SAFE | SAFE 文字列 | safe-gpt (~88.8M) | `safe` |
 | PromptSMILES | プレーンな SMILES + 推論時プロンプト | `entropy/gpt2_zinc_87m` | `promptsmiles` |
 
@@ -133,7 +133,7 @@ $ git clone https://huggingface.co/datamol-io/safe-gpt/ models/safe/gpt/pretrain
 ## データセットの構築
 ### 最初のステップ
 ```bash
-$ conda activate t5chem
+$ conda activate rffmg
 $ python src/curate_datasets.py
 ```
 
@@ -147,7 +147,7 @@ SAFE・PromptSMILESデータセットの保存処理がコメントアウトさ�
 
 ```bash
 # 1. rffmgフラグメントの作成
-$ conda activate t5chem
+$ conda activate rffmg
 $ python src/gen_frags/rffmg_frags.py --frag_method brics # chose brics or rc_cms
 
 # 2. safeフラグメントの作成

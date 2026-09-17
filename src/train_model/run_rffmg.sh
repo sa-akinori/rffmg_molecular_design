@@ -1,7 +1,7 @@
 # Setup conda environment and run training for RFFMG model
 cd "$(cd "$(dirname "$0")" && pwd)/../.." || exit 1
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate t5chem
+conda activate rffmg
 
 # Settings for training
 FRAG_NAME="brics"          # "brics" or "rc_cms"

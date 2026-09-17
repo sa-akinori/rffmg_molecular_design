@@ -1,6 +1,6 @@
 cd "$(cd "$(dirname "$0")" && pwd)/../.." || exit 1
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate t5chem
+conda activate rffmg
 
 FRAG_METHOD="rc_cms" # "brics" or "rc_cms"
 RECURSION_NUM=1
